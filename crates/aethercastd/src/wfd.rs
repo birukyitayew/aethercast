@@ -374,6 +374,112 @@ impl SourceDeviceInfo {
     }
 }
 
+/// Which bit layout a device information field uses.
+///
+/// The Wi-Fi Display specification numbers the bits of the 2-byte Device
+/// Information field from the least significant end, but the two readings
+/// that circulate disagree about *which octet* the low bits live in.
+///
+/// Rather than guess, AetherCast decodes **both** and lets a real sink's
+/// information element settle it: a sink must say "primary sink" and
+/// "session available", so only one of the two readings can be right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum Layout {
+    /// Bits 0-7 live in the low octet.
+    LsbInLowOctet,
+    /// Bits 0-7 live in the high octet.
+    LsbInHighOctet,
+}
+
+impl fmt::Display for Layout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Layout::LsbInLowOctet => "bits 0-7 in the low octet",
+            Layout::LsbInHighOctet => "bits 0-7 in the high octet",
+        })
+    }
+}
+
+/// Decode a device information field under both candidate layouts.
+pub fn decode_layouts(bytes: &[u8]) -> Vec<(Layout, DeviceInfo)> {
+    let mut out = Vec::new();
+    if bytes.len() >= 2 {
+        out.push((Layout::LsbInLowOctet, decode_with(bytes, true)));
+        out.push((Layout::LsbInHighOctet, decode_with(bytes, false)));
+    }
+    out
+}
+
+/// Decode under one layout: `low_octet` says whether bits 0-7 are the low
+/// octet.
+fn decode_with(bytes: &[u8], low_octet: bool) -> DeviceInfo {
+    let raw = if low_octet {
+        u16::from_be_bytes([bytes[0], bytes[1]])
+    } else {
+        u16::from_be_bytes([bytes[1], bytes[0]])
+    };
+    let mut info = DeviceInfo::parse(&[0, 0]).unwrap();
+    info.raw = raw;
+    info.device_type = match raw & 0b11 {
+        0b00 => DeviceType::Source,
+        0b01 => DeviceType::PrimarySink,
+        0b10 => DeviceType::SecondarySink,
+        _ => DeviceType::Dual,
+    };
+    info.session_available = (raw >> 4) & 0b11 == 0b01;
+    info.prefer_tdls = raw & (1 << 7) != 0;
+    info.coupled_sink_at_source = raw & (1 << 2) != 0;
+    info.coupled_sink_at_sink = raw & (1 << 3) != 0;
+    info.wsd_available = raw & (1 << 6) != 0;
+    info.hdcp2_supported = raw & (1 << 8) != 0;
+    info.time_sync_supported = raw & (1 << 9) != 0;
+    info.audio_unsupported = raw & (1 << 10) != 0;
+    info.audio_only = raw & (1 << 11) != 0;
+    info
+}
+
+/// Build a source WFD IE with a raw device information field.
+///
+/// This is the escape hatch for interop: when a sink rejects our element,
+/// we can advertise exactly the same two bytes the sink itself uses.
+pub fn source_ie_with_device_info(
+    device_info: [u8; 2],
+    control_port: u16,
+    throughput: u16,
+) -> WfdIe {
+    let mut body = device_info.to_vec();
+    body.extend_from_slice(&control_port.to_be_bytes());
+    body.extend_from_slice(&throughput.to_be_bytes());
+    WfdIe {
+        subelements: vec![Subelement {
+            id: id::DEVICE_INFO,
+            body,
+        }],
+    }
+}
+
+/// The device information field AetherCast advertises.
+///
+/// The field is two bytes, and the two readings of the specification
+/// disagree about which octet holds the low bits. A source therefore
+/// risks being read as "no session available", which is a legitimate
+/// reason for a sink to ignore it.
+///
+/// The fix is to use a **symmetric** value: `0x1010` in both octets, so
+/// every reading sees exactly the same thing - a source, session
+/// available, no TDLS preference, no HDCP claim, and no WSD claim.
+///
+/// Under the reading the research note uses, GNOME Network Displays'
+/// element (`0x0090`) says "source, available, TDLS preferred"; under the
+/// specification's own drawing the same bytes say "source, **not
+/// available**", and the TDLS bit lands somewhere else entirely. A sink
+/// that follows the specification would ignore it, which is a plausible
+/// reason for the empty sink list.
+///
+/// Once a real sink's element has been captured, `source_ie_with_device_info`
+/// lets us copy it exactly rather than reason about it.
+pub const AETHERCAST_DEVICE_INFO: [u8; 2] = [0x10, 0x10];
+
 /// AetherCast's own WFD IE, as a source.
 pub fn source_ie(control_port: u16, max_throughput_mbps: u16) -> WfdIe {
     let info = SourceDeviceInfo::new(
@@ -384,7 +490,12 @@ pub fn source_ie(control_port: u16, max_throughput_mbps: u16) -> WfdIe {
     WfdIe {
         subelements: vec![Subelement {
             id: id::DEVICE_INFO,
-            body: info.to_bytes(),
+            body: {
+                let mut body = AETHERCAST_DEVICE_INFO.to_vec();
+                body.extend_from_slice(&control_port.to_be_bytes());
+                body.extend_from_slice(&max_throughput_mbps.to_be_bytes());
+                body
+            },
         }],
     }
 }
@@ -417,6 +528,28 @@ mod tests {
         let parsed = WfdIe::parse(&bytes).unwrap();
         assert_eq!(parsed, ie);
         assert_eq!(WfdIe::parse_hex(&ie.to_hex()).unwrap(), ie);
+    }
+
+    #[test]
+    fn our_element_reads_the_same_under_both_layouts() {
+        let ours = source_ie(DEFAULT_CONTROL_PORT, 200);
+        let field = &ours.to_bytes()[3..5];
+        assert_eq!(field, &AETHERCAST_DEVICE_INFO);
+        let layouts = decode_layouts(field);
+        let (_, first) = &layouts[0];
+        let (_, second) = &layouts[1];
+        assert_eq!(first, second, "the two readings must agree");
+        assert_eq!(first.device_type, DeviceType::Source);
+        assert!(first.session_available);
+        assert!(!first.prefer_tdls);
+    }
+
+    #[test]
+    fn gnd_s_element_does_not_read_the_same_under_both_layouts() {
+        let layouts = decode_layouts(&[0x00, 0x90]);
+        assert_ne!(layouts[0].1, layouts[1].1);
+        // Under the specification's drawing it claims no session.
+        assert!(!layouts[1].1.session_available);
     }
 
     #[test]
@@ -459,6 +592,35 @@ mod tests {
         let info = DeviceInfo::source_available();
         let bytes = info.to_bytes();
         assert_eq!(DeviceInfo::parse(&bytes).unwrap(), info);
+    }
+
+    #[test]
+    fn the_two_layouts_disagree_about_gnd_s_element() {
+        // GNOME Network Displays' element, under the reading the research
+        // note uses: source, session available, TDLS preferred.
+        let gnd = [0x00, 0x90];
+        let layouts = decode_layouts(&gnd);
+        let (layout, info) = &layouts[0];
+        assert_eq!(*layout, Layout::LsbInLowOctet);
+        assert_eq!(info.device_type, DeviceType::Source);
+        assert!(info.session_available);
+        assert!(info.prefer_tdls);
+
+        // Under the other reading the same bytes claim the opposite: a
+        // source with no session availability. That is exactly the kind of
+        // difference a sink filters on.
+        let (layout, info) = &layouts[1];
+        assert_eq!(*layout, Layout::LsbInHighOctet);
+        assert_eq!(info.device_type, DeviceType::Source);
+        assert!(!info.session_available);
+    }
+
+    #[test]
+    fn a_raw_device_information_field_can_be_advertised() {
+        let ie = source_ie_with_device_info([0x11, 0x90], 7236, 200);
+        assert_eq!(ie.to_hex(), "00000611901c4400c8");
+        let parsed = WfdIe::parse(&ie.to_bytes()).unwrap();
+        assert_eq!(parsed.device_info().unwrap().raw, 0x1190);
     }
 
     #[test]

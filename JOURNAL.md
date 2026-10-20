@@ -51,6 +51,69 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-20 — The sink may be filtering us: four mechanisms, and a bug in our own element
+
+The user asked the right question: maybe the TV only accepts a phone or a
+PC, and rejects everything else. That is a real possibility, so we
+enumerated the ways a sink can ignore a source.
+
+**1. The WFD device information field.** Two bytes carrying the device
+type (source, primary sink, secondary sink, dual), session availability,
+the WFD protocol version, MAC address availability, information element
+availability, WSD availability, the TDLS preference, HDCP support, time
+synchronisation, and the audio flags.
+
+Here we found a bug — **in our element and in GNOME Network Displays'**.
+The two readings of the specification disagree about which octet holds
+the low bits, and the readings disagree about what the *same bytes*
+mean:
+
+```
+$ aethercastd wfd decode 000600901c4400c8      # GNOME Network Displays
+  bits 0-7 in the low octet
+    device type      : source
+    session available: true
+    TDLS preferred   : true
+  bits 0-7 in the high octet
+    device type      : source
+    session available: false        <- a sink may ignore this
+```
+
+The element AetherCast advertised had the same problem: under the
+specification's own drawing it claimed **no session availability**.
+
+The fix is to stop guessing: advertise a **symmetric** value, `0x1010` in
+both octets, so every reading sees exactly the same thing — a source,
+session available, no TDLS preference, no HDCP claim. Both readings now
+agree, and a unit test enforces it.
+
+**2. The P2P primary device type.** The P2P device type attribute is
+`0050F204-<category>-<subcategory>`: `1-1` computer/PC, `1-6`
+computer/desktop, `10-3` phone/smartphone, `7-1` display/TV. A sink may
+accept only one category — "a phone" or "a PC" — and ignore the rest.
+`wpa_supplicant` takes this from its configuration file, and
+**NetworkManager exposes no property for it**, so changing it means
+AetherCast has to own the supplicant configuration. That is an
+architectural decision for v1, not a flag.
+
+**3. Content protection.** If the sink requires HDCP and the source
+advertises none, it may refuse. We advertise no HDCP, which is honest:
+we cannot offer it.
+
+**4. The channel and the listen channel.** Covered by the capture sweep.
+
+**Tooling built for this**
+
+- `aethercastd wfd decode <hex>` decodes an element under **both**
+  layouts, so a captured sink element immediately shows which reading is
+  right — a sink must say "primary sink" and "session available", so only
+  one reading can be.
+- `aethercastd arm --device-info <hex>` advertises an exact device
+  information field, so once we have the sink's own bytes we can copy
+  them instead of reasoning about them.
+
+---
+
 ## 2026-10-20 — Milestone 4: Wi-Fi Direct, and the wrong model of it
 
 **What we learned by trying to form a group on this hardware**

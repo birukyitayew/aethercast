@@ -69,6 +69,22 @@ enum Command {
     /// Wi-Fi Direct group formation.
     #[command(subcommand)]
     P2p(P2pCommand),
+    /// Work with WFD information elements.
+    #[command(subcommand)]
+    Wfd(WfdCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum WfdCommand {
+    /// Decode a WFD information element body, under every candidate layout.
+    Decode(WfdDecodeArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct WfdDecodeArgs {
+    /// The element body, as hex. This is what a sink reports in its
+    /// `wfd_dev_info` field.
+    hex: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -179,6 +195,10 @@ struct ArmArgs {
     /// Maximum throughput to advertise, in Mbit/s.
     #[arg(long, default_value_t = 200)]
     throughput: u16,
+    /// Advertise this exact device information field, as two hex bytes.
+    /// Use it to copy what a sink itself advertises.
+    #[arg(long)]
+    device_info: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -219,7 +239,60 @@ fn main() -> Result<()> {
         Command::P2p(P2pCommand::Group(args)) => p2p_group(&cli, radio, args),
         Command::P2p(P2pCommand::Connect(args)) => p2p_connect(&cli, radio, args),
         Command::P2p(P2pCommand::Listen(args)) => p2p_listen(&cli, radio, args),
+        Command::Wfd(WfdCommand::Decode(args)) => wfd_decode(&cli, args),
     }
+}
+
+/// Decode a WFD information element, under both candidate bit layouts.
+fn wfd_decode(cli: &Cli, args: &WfdDecodeArgs) -> Result<()> {
+    let hex = args.hex.trim().trim_start_matches("0x");
+    let mut bytes = Vec::new();
+    for pair in hex.as_bytes().chunks(2) {
+        if pair.len() < 2 {
+            anyhow::bail!("the hex string has an odd length");
+        }
+        bytes.push(u8::from_str_radix(std::str::from_utf8(pair)?, 16)?);
+    }
+    if bytes.is_empty() {
+        anyhow::bail!("no bytes to decode");
+    }
+    // Accept either a whole element body (id, length, body) or the raw
+    // device information field, and pick out the field to decode.
+    let field: Vec<u8> = match wfd::WfdIe::parse(&bytes) {
+        Ok(element) => match element.get(wfd::id::DEVICE_INFO) {
+            Some(body) => body.to_vec(),
+            None => bytes.clone(),
+        },
+        Err(_) => bytes.clone(),
+    };
+    let layouts = wfd::decode_layouts(&field);
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "hex": hex,
+            "layouts": layouts.iter().map(|(layout, info)| serde_json::json!({
+                "layout": format!("{layout}"),
+                "device_type": format!("{}", info.device_type),
+                "session_available": info.session_available,
+                "prefer_tdls": info.prefer_tdls,
+                "wsd_available": info.wsd_available,
+                "hdcp2_supported": info.hdcp2_supported,
+                "raw": format!("0x{:04x}", info.raw),
+            })).collect::<Vec<_>>(),
+        }))?);
+        return Ok(());
+    }
+    println!("element: {} ({} bytes)", hex, bytes.len());
+    println!("device information field: {}", field.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    for (layout, info) in layouts {
+        println!("  {layout}");
+        println!("    device type      : {}", info.device_type);
+        println!("    session available: {}", info.session_available);
+        println!("    TDLS preferred   : {}", info.prefer_tdls);
+        println!("    WSD available    : {}", info.wsd_available);
+        println!("    HDCP 2.x         : {}", info.hdcp2_supported);
+        println!("    raw              : 0x{:04x}", info.raw);
+    }
+    Ok(())
 }
 
 /// Stay discoverable, the way a Miracast source has to, and wait for a sink
@@ -598,9 +671,23 @@ fn doctor(cli: &Cli, mut radio: Radio) -> Result<()> {
 }
 
 fn arm(cli: &Cli, mut radio: Radio, args: &ArmArgs) -> Result<()> {
-    let ie = match args.profile {
-        Profile::Aethercast => wfd::source_ie(args.port, args.throughput),
-        Profile::Gnd => wfd::gnd_ie(),
+    let ie = match &args.device_info {
+        // The interop escape hatch: advertise exactly these two bytes.
+        Some(hex) => {
+            let hex = hex.trim().trim_start_matches("0x");
+            if hex.len() != 4 {
+                anyhow::bail!("--device-info needs exactly two hex bytes, for example 1190");
+            }
+            let mut bytes = [0u8; 2];
+            for (i, pair) in hex.as_bytes().chunks(2).enumerate() {
+                bytes[i] = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
+            }
+            wfd::source_ie_with_device_info(bytes, args.port, args.throughput)
+        }
+        None => match args.profile {
+            Profile::Aethercast => wfd::source_ie(args.port, args.throughput),
+            Profile::Gnd => wfd::gnd_ie(),
+        },
     };
     radio.set_wfd_ie(&ie)?;
     let readback = radio.wfd_ie()?.unwrap_or_else(WfdIe::default);
