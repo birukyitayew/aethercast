@@ -107,6 +107,17 @@ struct CastArgs {
     /// sink for the system mix.
     #[arg(long, default_value = "default")]
     audio_device: String,
+    /// Form a Wi-Fi Direct group and serve the session on it.
+    #[arg(long)]
+    group: bool,
+    /// Use a generated test pattern instead of capturing the screen. This
+    /// makes the cast testable without a display.
+    #[arg(long)]
+    test_pattern: bool,
+    /// The frequency for the group, in MHz. On a single-radio adapter the
+    /// group has to share the station's channel.
+    #[arg(long)]
+    freq: Option<u32>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -217,6 +228,9 @@ struct MediaTestArgs {
     /// Send RTP over UDP to this host:port instead of writing a file.
     #[arg(long)]
     udp: Option<String>,
+    /// Use a generated test pattern instead of capturing the screen.
+    #[arg(long)]
+    test_pattern: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -284,8 +298,36 @@ fn main() -> Result<()> {
 /// The sink connects to our RTSP control port, we negotiate with it, and
 /// then the media pipeline starts streaming to the RTP port it asked for.
 fn cast(cli: &Cli, mut radio: Radio, args: &CastArgs) -> Result<()> {
-    let server = rtsp::Server::bind(args.port)
-        .map_err(|e| anyhow::anyhow!("binding port {} failed: {e}", args.port))?;
+    // On a Wi-Fi Display session the sink reaches us on the group
+    // interface, so the group has to exist before the server is bound.
+    let mut group_address = None;
+    if args.group {
+        let before = radio.p2p_group_interfaces();
+        radio.p2p_group_add(args.freq)?;
+        println!("group requested (freq: {:?})", args.freq);
+        let interface = radio.wait_for_group_interface(
+            &before,
+            std::time::Duration::from_secs(20),
+        )?;
+        match interface {
+            Some((interface, address)) => {
+                println!("the group is up on {interface} ({address})");
+                println!("a sink must join the group and connect to {address}:{}", args.port);
+                group_address = Some(address);
+            }
+            None => {
+                println!("the group interface has no address yet - it gets one");
+                println!("when a peer joins, so the session will be served on all");
+                println!("addresses until then");
+            }
+        }
+    }
+
+    let server = match group_address {
+        Some(address) => rtsp::Server::bind_to(std::net::IpAddr::V4(address), args.port),
+        None => rtsp::Server::bind(args.port),
+    }
+    .map_err(|e| anyhow::anyhow!("binding port {} failed: {e}", args.port))?;
     println!("waiting for a sink on port {} for up to {}s", server.port(), args.wait);
 
     // The sink has to be discoverable before it can connect, so advertise.
@@ -323,6 +365,7 @@ fn cast(cli: &Cli, mut radio: Radio, args: &CastArgs) -> Result<()> {
         encoder: media::Encoder::Auto,
         audio: args.audio,
         audio_device: args.audio_device.clone(),
+        test_pattern: args.test_pattern,
     };
     let sink = media::Sink::Udp {
         host: session.peer.ip().to_string(),
@@ -637,6 +680,7 @@ fn media_test(cli: &Cli, args: &MediaTestArgs) -> Result<()> {
         encoder: args.encoder,
         audio: args.audio,
         audio_device: args.audio_device.clone(),
+        test_pattern: args.test_pattern,
     };
     // A UDP destination exercises the RTP transport; a file keeps bare
     // MPEG-TS so the stream can be validated with ffprobe.

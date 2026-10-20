@@ -280,6 +280,17 @@ pub struct Server {
 }
 
 impl Server {
+    /// Bind the control port on a specific address.
+    ///
+    /// For a Wi-Fi Display session the sink reaches us on the **group
+    /// interface's** address, not on the station's, so the server has to
+    /// be bound there.
+    pub fn bind_to(address: std::net::IpAddr, port: u16) -> std::io::Result<Self> {
+        Ok(Self {
+            listener: TcpListener::bind((address, port))?,
+        })
+    }
+
     /// Put the listener in non-blocking mode.
     pub fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
         self.listener.set_nonblocking(nonblocking)

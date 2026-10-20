@@ -86,6 +86,11 @@ pub struct Profile {
     pub encoder: Encoder,
     /// Capture the system audio mix as well.
     pub audio: bool,
+    /// Use a generated test pattern instead of capturing the screen.
+    ///
+    /// This is what makes the pipeline testable on a machine with no
+    /// display, such as a build server.
+    pub test_pattern: bool,
     /// The PulseAudio source to capture. The system mix is the *monitor* of
     /// the default sink, for example
     /// `alsa_output.pci-0000_00_1f.3.analog-stereo.monitor`.
@@ -109,6 +114,7 @@ impl Default for Profile {
             encoder: Encoder::Auto,
             audio: false,
             audio_device: "default".to_string(),
+            test_pattern: false,
         }
     }
 }
@@ -186,9 +192,18 @@ pub fn build(profile: &Profile, sink: &Sink) -> Result<Pipeline> {
     // `videoscale` has to be explicit: `videoconvert` on its own refuses
     // the size negotiation, and the reference display is an unusual
     // 1821x1024 at 25 fps, so the scale is not an integer factor.
-    let capture = gst::ElementFactory::make("ximagesrc").build()?;
-    capture.set_property("use-damage", false);
-    capture.set_property("show-pointer", false);
+    let capture = if profile.test_pattern {
+        // A generated pattern needs no display, so the whole path can be
+        // tested on a build server.
+        let pattern = gst::ElementFactory::make("videotestsrc").build()?;
+        pattern.set_property("is-live", true);
+        pattern
+    } else {
+        let screen = gst::ElementFactory::make("ximagesrc").build()?;
+        screen.set_property("use-damage", false);
+        screen.set_property("show-pointer", false);
+        screen
+    };
 
     let scale = gst::ElementFactory::make("videoscale").build()?;
 

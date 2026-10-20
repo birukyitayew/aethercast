@@ -40,13 +40,25 @@ if [ ! -x ./target/release/aethercastd ]; then
 fi
 
 # libpulse aborts on default server discovery on this machine, so the
-# PipeWire-Pulse socket has to be named explicitly.
+# PipeAudio socket has to be named explicitly.
 export PULSE_SERVER="unix:${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native"
 AUDIO_DEVICE="${AUDIO_DEVICE:-alsa_output.pci-0000_00_1f.3.analog-stereo.monitor}"
 
+# A build server has neither a display nor a sound card, so the test can be
+# run with a generated pattern and without audio.
+SOURCE_ARGS=()
+if [ "${TEST_PATTERN:-0}" = "1" ]; then
+	SOURCE_ARGS+=(--test-pattern)
+else
+	SOURCE_ARGS+=(--audio --audio-device "$AUDIO_DEVICE")
+fi
+if [ "${NO_AUDIO:-0}" = "1" ]; then
+	SOURCE_ARGS=(--test-pattern)
+fi
+
 echo "== starting the source =="
 timeout $((SECS + 40)) ./target/release/aethercastd cast --port 7236 --seconds "$SECS" \
-	--audio --audio-device "$AUDIO_DEVICE" > "$OUT/source.log" 2>&1 &
+	"${SOURCE_ARGS[@]}" > "$OUT/source.log" 2>&1 &
 SOURCE=$!
 sleep 2
 
@@ -81,9 +93,11 @@ VIDEO_CODEC=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_na
 AUDIO_CODEC=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$TS" 2>/dev/null | head -1)
 
 check "the video PID is the WFD one (0x1011)" "0x1011" "$VIDEO_PID"
-check "the audio PID is the WFD one (0x1100)" "0x1100" "$AUDIO_PID"
 check "the video codec" "h264" "$VIDEO_CODEC"
-check "the audio codec" "aac" "$AUDIO_CODEC"
+if [ "${NO_AUDIO:-0}" != "1" ]; then
+	check "the audio PID is the WFD one (0x1100)" "0x1100" "$AUDIO_PID"
+	check "the audio codec" "aac" "$AUDIO_CODEC"
+fi
 
 echo
 if [ "$fail" = "0" ]; then
