@@ -134,3 +134,16 @@ for channel in $CHANNELS; do
 	alto=$(tshark -r "$PCAP" -T fields -e wlan.sa 2>/dev/null | grep -i -E '^dc:29:19' | sort -u)
 	if [ -n "$alto" ]; then echo "$alto" | sed 's/^/      /'; else echo "      none"; fi
 done
+
+echo
+echo "== 4. what the devices actually advertise =="
+echo "   (the WFD information element is not decoded by tshark, so this"
+echo "    parses the capture directly)"
+python3 "$(dirname "$0")/11-extract-wfd.py" $OUT/monitor-ch*.pcap 2>&1 | sed 's/^/  /'
+
+echo
+echo "== next =="
+echo "  If a device above shows a WFD element, decode it with:"
+echo "    aethercastd wfd decode <the element bytes>"
+echo "  and then advertise those exact bytes with:"
+echo "    aethercastd arm --device-info <the two device-information bytes>"
