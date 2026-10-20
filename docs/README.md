@@ -21,6 +21,15 @@ AetherCast is in the research phase. This directory is the single source of trut
 4. `research/04-other-protocols.md` — Google Cast, AirPlay, DLNA, prior art
 5. `research/05-product-architecture.md` — UX, architecture, packaging, security, license, CI
 
+Start with the [research index](research/README.md) for the six findings that decide the project.
+
+## Decisions
+
+- [ADR-0001](adr/0001-research-first-and-v1-scope.md) — research first, Miracast source first (Accepted)
+- [ADR-0002](adr/0002-rust-control-gstreamer-media.md) — Rust control plane, GStreamer media plane (Proposed)
+- [ADR-0003](adr/0003-license-gpl3.md) — GPL-3.0-or-later, DCO, no CLA (Proposed)
+- [ADR-0004](adr/0004-codename-not-brand.md) — "AetherCast" is a codename, not a brand (Accepted)
+
 ## Research standards
 
 - Every factual claim needs a source link or a reproducible local command.

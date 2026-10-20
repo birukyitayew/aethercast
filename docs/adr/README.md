@@ -45,3 +45,6 @@ Links to research, issues, specifications, or experiments.
 | ADR | Title | Status |
 | --- | --- | --- |
 | [0001](0001-research-first-and-v1-scope.md) | Research first, Miracast source first | Accepted |
+| [0002](0002-rust-control-gstreamer-media.md) | Rust control plane, GStreamer media plane | Proposed |
+| [0003](0003-license-gpl3.md) | GPL-3.0-or-later, DCO, no CLA | Proposed |
+| [0004](0004-codename-not-brand.md) | "AetherCast" is a codename, not a brand | Accepted |

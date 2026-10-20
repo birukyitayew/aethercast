@@ -48,3 +48,36 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 - Synthesize the five research notes into an architecture and roadmap.
 - Decide the stack and license with evidence.
 - Build a minimal discovery + RTSP handshake spike before a full UI.
+
+---
+
+## 2026-10-20 — Research phase complete
+
+**What landed**
+Five cited research notes, ~30,000 words, 393 URLs, 393+ line-level claims labelled verified / reported / speculative:
+
+| Note | Words |
+| --- | --- |
+| 01 — Miracast / WFD protocol + GND code audit | 5,999 |
+| 02 — Linux Wi-Fi P2P, drivers, channel constraints | 5,981 |
+| 03 — Media pipeline, codecs, latency | 5,958 |
+| 04 — Google Cast, AirPlay, DLNA, prior art | 6,334 |
+| 05 — Product, architecture, packaging, license, name | 5,999 |
+
+**The findings that matter**
+1. Discovery fails *before* RTSP. The machine has no global WFD IE (`wpa_cli get WFDIEs` → `FAIL`); NetworkManager only applies `wfd-ies` at activation, never while scanning. Prime suspect for "discovers no sinks".
+2. The radio is the binding constraint. `ath9k` on the QCA9565/AR9565 is `#channels <= 1`; a P2P group on another channel fails with `-2`. Discovery off-channel still works via ROC.
+3. NetworkManager cannot express GO intent, operating frequency, or peer channel — a narrow helper is required.
+4. Software encode is 720p30-only and only with x264. Measured here: OpenH264 0.32–0.81× realtime at 720p30, x264 2.64×. `vah264enc` is missing from stock GStreamer 1.28.3.
+5. GND's negotiation core has four high-severity defects (no global WFD IE in discovery, second RTP port misread as RTCP, resolution selection compiled out, 512 kbit/s clamp). Forking inherits them.
+6. "AetherCast" collides with `ubports/aethercast` and Canonical's 2015 Ubuntu Miracast project. Codename only; rename before any brand.
+
+**Decisions recorded**
+- ADR-0002 (Proposed): Rust control plane, GStreamer media plane, daemon + versioned D-Bus + GTK4 + CLI.
+- ADR-0003 (Proposed): GPL-3.0-or-later, DCO, no CLA, no DRM circumvention, no proprietary codec bundling.
+- ADR-0004 (Accepted): the name is a codename; clearance checklist and a registry-swept shortlist recorded.
+
+**Next**
+- Milestone 1: a headless discovery spike that sets the global WFD IE and captures a scan, to settle whether the AltoBeam TV answers WFD probes at all.
+- Then a minimal WFD M1–M3 exchange to read the sink's real capability bitmap.
+- Then the first frame, then the UI.
