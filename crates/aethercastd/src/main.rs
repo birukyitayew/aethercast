@@ -428,7 +428,19 @@ fn cast(cli: &Cli, args: &CastArgs) -> Result<()> {
     let built = media::build(&profile, &sink)?;
 
     let bus = built.pipeline.bus().expect("the pipeline has a bus");
-    built.pipeline.set_state(gstreamer::State::Playing)?;
+    if let Err(e) = built.pipeline.set_state(gstreamer::State::Playing) {
+        // The bus carries the reason, and a bare "failed to change its
+        // state" tells nobody anything.
+        let mut detail = String::new();
+        while let Some(message) = bus.timed_pop(gstreamer::ClockTime::ZERO) {
+            if let gstreamer::MessageView::Error(err) = message.view() {
+                detail = format!("{err}\n{}", err.debug().unwrap_or_default());
+                break;
+            }
+        }
+        built.pipeline.set_state(gstreamer::State::Null).ok();
+        anyhow::bail!("the pipeline would not start: {e}\n{detail}");
+    }
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(args.seconds as u64);
     while std::time::Instant::now() < deadline {
@@ -784,7 +796,19 @@ fn media_test(cli: &Cli, args: &MediaTestArgs) -> Result<()> {
     let built = media::build(&profile, &sink)?;
 
     let bus = built.pipeline.bus().expect("the pipeline has a bus");
-    built.pipeline.set_state(gstreamer::State::Playing)?;
+    if let Err(e) = built.pipeline.set_state(gstreamer::State::Playing) {
+        // The bus carries the reason, and a bare "failed to change its
+        // state" tells nobody anything.
+        let mut detail = String::new();
+        while let Some(message) = bus.timed_pop(gstreamer::ClockTime::ZERO) {
+            if let gstreamer::MessageView::Error(err) = message.view() {
+                detail = format!("{err}\n{}", err.debug().unwrap_or_default());
+                break;
+            }
+        }
+        built.pipeline.set_state(gstreamer::State::Null).ok();
+        anyhow::bail!("the pipeline would not start: {e}\n{detail}");
+    }
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(args.seconds as u64);
     while std::time::Instant::now() < deadline {

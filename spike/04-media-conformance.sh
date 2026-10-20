@@ -91,7 +91,7 @@ CAPTURED=0
 if [ "$(id -u)" = "0" ]; then
 	# "any" rather than "lo": the traffic is loopback, but the capture
 	# interface differs between a container and a machine.
-	dumpcap -i any -f "udp port 5000" -w "$PCAP" >"$OUT/dumpcap.log" 2>&1 &
+	dumpcap -i any -f "udp port 50000" -w "$PCAP" >"$WORK/dumpcap.log" 2>&1 &
 	CAP_PID=$!
 	sleep 3
 	CAPTURED=1
@@ -101,7 +101,7 @@ fi
 
 # The media test's own output is shown, so a failure here is visible
 # instead of looking like an empty capture.
-"$BIN" media test --seconds 6 --udp 127.0.0.1:5000 --width 640 --height 480 --framerate 30 2>&1 |
+"$BIN" media test --seconds 6 --udp 127.0.0.1:50000 --width 640 --height 480 --framerate 30 2>&1 |
 	sed 's/^/  /'
 sleep 2
 if [ "$CAPTURED" = "1" ]; then
