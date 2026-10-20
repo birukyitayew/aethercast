@@ -1,0 +1,75 @@
+name: Bug report
+description: Report a discovery, connection, video, audio, or packaging problem.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping make AetherCast reliable. Casting bugs are usually hardware- and driver-specific, so please include as much environment detail as you can.
+
+        **Do not include Wi-Fi passwords, tokens, private screen captures, or other secrets.**
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the failure and what you saw on screen.
+      placeholder: "The TV never appeared in the sink list..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact commands or UI actions.
+      placeholder: |
+        1. Open AetherCast
+        2. Put the TV in Miracast mode
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution and version
+      placeholder: "Kali Linux 2026.2"
+    validations:
+      required: true
+  - type: input
+    id: session
+    attributes:
+      label: Desktop and session type
+      placeholder: "XFCE / X11"
+    validations:
+      required: true
+  - type: input
+    id: wifi
+    attributes:
+      label: Wi-Fi adapter and driver
+      placeholder: "Qualcomm QCA9565 / ath9k"
+  - type: input
+    id: sink
+    attributes:
+      label: TV, dongle, or sink model
+      placeholder: "Brand and model, if known"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and diagnostics
+      description: Paste sanitized logs, or attach a diagnostics bundle once the app supports it.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and documentation.
+          required: true
+        - label: I removed passwords, tokens, and private screen content from the report.
+          required: true

@@ -1,0 +1,49 @@
+name: Research finding or compatibility report
+description: Share a protocol finding, capture, driver result, or device compatibility report.
+title: "[Research]: "
+labels: ["research"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Research is a first-class contribution. Please cite sources and separate what you verified from what you inferred.
+  - type: textarea
+    id: finding
+    attributes:
+      label: Finding
+      description: What did you learn?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Commands, logs, packet captures, source links, or documents.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Hardware, driver, distribution, kernel, TV/dongle, and software versions.
+  - type: dropdown
+    id: confidence
+    attributes:
+      label: Confidence
+      options:
+        - Verified locally
+        - Reproduced from a public source
+        - Reported by someone else
+        - Speculative / needs testing
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed secrets and private screen content from the evidence.
+          required: true
+        - label: I cited public sources where applicable.
+          required: true

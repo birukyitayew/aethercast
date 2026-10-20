@@ -35,6 +35,7 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
   4. Google Cast, AirPlay, DLNA, and open-source prior art.
   5. Product, UX, architecture, packaging, security, licensing, CI, and roadmap.
 - Project skeleton and documentation structure created.
+- Added ADR-0001 (research first, Miracast source first), issue/PR templates, contributing/security/conduct docs, and roadmap/compatibility placeholders.
 
 **Known hard limits to design around**
 - HDCP/DRM cannot be bypassed.
