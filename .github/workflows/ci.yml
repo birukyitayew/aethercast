@@ -59,5 +59,7 @@ jobs:
           TEST_PATTERN=1 NO_AUDIO=1 ./spike/19-end-to-end.sh 10
 
       - name: The media conformance checks
+        # With privileges, so the RTP transport check can capture on the
+        # loopback interface and is really exercised.
         run: |
-          NO_AUDIO=1 TEST_PATTERN=1 ./spike/04-media-conformance.sh
+          sudo NO_AUDIO=1 TEST_PATTERN=1 ./spike/04-media-conformance.sh

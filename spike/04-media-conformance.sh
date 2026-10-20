@@ -84,15 +84,29 @@ echo
 echo "== 3. RTP transport =="
 PCAP="$WORK/rtp.pcap"
 rm -f "$PCAP"
-dumpcap -i lo -f "udp port 5000" -w "$PCAP" >/dev/null 2>&1 &
-CAP_PID=$!
-sleep 3
+
+# Capturing on the loopback interface needs root, and a check that cannot
+# run is skipped rather than failed.
+CAPTURED=0
+if [ "$(id -u)" = "0" ]; then
+	dumpcap -i lo -f "udp port 5000" -w "$PCAP" >/dev/null 2>&1 &
+	CAP_PID=$!
+	sleep 3
+	CAPTURED=1
+else
+	echo "  (needs root to capture; run this script with sudo to exercise it)"
+fi
+
 "$BIN" media test --seconds 6 --udp 127.0.0.1:5000 --width 640 --height 480 --framerate 30 >/dev/null 2>&1
 sleep 2
-kill "$CAP_PID" 2>/dev/null
-wait "$CAP_PID" 2>/dev/null
+if [ "$CAPTURED" = "1" ]; then
+	kill "$CAP_PID" 2>/dev/null
+	wait "$CAP_PID" 2>/dev/null
+fi
 
-if [ ! -s "$PCAP" ]; then
+if [ "$CAPTURED" != "1" ]; then
+	echo "  SKIP  the RTP transport check needs root to capture on the loopback interface"
+elif [ ! -s "$PCAP" ]; then
 	echo "  FAIL  no packets captured"
 	fail=1
 else
