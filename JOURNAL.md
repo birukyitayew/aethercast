@@ -51,6 +51,42 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-20 — Milestone 3: the WFD RTSP handshake
+
+**What we built**
+
+`crates/aethercastd/src/rtsp.rs` implements the source side of the Wi-Fi Display RTSP profile: M1 `OPTIONS`, M2, M3 `GET_PARAMETER` with the sink's capabilities parsed, M4 `SET_PARAMETER` with our format selection, M5, M6 `SETUP` with the `Session` header, and M7.
+
+**The protocol no longer needs a TV to be developed against.** `spike/06-mock-sink.py` plays the sink's role exactly, and `spike/07-rtsp-handshake-test.sh` checks the whole sequence:
+
+```
+PASS  the server logged '-> M1 OPTIONS'      PASS  '<- M6 SETUP'
+PASS  the server logged '<- M2 OPTIONS'      PASS  '<- M7 PLAY'
+PASS  the server logged '-> M3 GET_PARAMETER' PASS  the RTP port was parsed
+PASS  the server logged '-> M4 SET_PARAMETER' PASS  the handshake reached the playing state
+```
+
+The second RTP port is read the way the specification defines it — a second RTP stream for a coupled secondary sink, **not** RTCP — so a sink reporting `rtp-port1=0` means "one MPEG-TS stream" rather than a reserved combination. This is the detail the code audit found GNOME Network Displays getting wrong.
+
+**The topology, established by experiment**
+
+| Question | Answer | How |
+| --- | --- | --- |
+| Is this machine on Ethernet? | **No** — it has no Ethernet interface at all, only `wlan0` | `ip -br link` |
+| Where is the sink? | `192.168.1.2` and `.8`, AltoBeam MAC `dc:29:19:7f:46:5e`, **REACHABLE** | neighbour table sweep |
+| Is the network 5 GHz? | **No** — the `Biruk` AP is channel 1 (2412 MHz) and there is no 5 GHz network anywhere | `nmcli dev wifi list` |
+| Can the adapter see 5 GHz? | **No** — `iw phy phy0 info` shows Band 1 only | `iw phy` |
+| Does the sink advertise mDNS services? | **No** — `_display._tcp`, `_googlecast._tcp`, `_airplay._tcp` are all empty, and no casting port is open | `avahi-browse -rt` |
+| Did the sink leave the AP earlier? | **Yes** — the AltoBeam device disappeared entirely while the sink was in Miracast mode, which is exactly what entering Wi-Fi Direct does | neighbour table, before and after |
+
+So the sink's Miracast listener is on the same 2.4 GHz band we can hear, which rules out the "5 GHz only" explanation. It is a Wi-Fi Direct question, not a hardware-blindness question — and the remaining test is a monitor-mode capture of the air, which is the only thing a managed interface cannot do.
+
+**Next**
+- The sink enters Miracast mode, and the monitor-mode capture (`spike/05-monitor-capture.sh`) shows whether it transmits on 2.4 GHz and what it advertises.
+- P2P group formation: `P2P_GROUP_ADD`, the sink joining our group, and the RTSP server bound to the group interface.
+
+---
+
 ## 2026-10-20 — Milestone 2: the media pipeline conforms
 
 **What we built**
