@@ -100,9 +100,10 @@ else
 fi
 
 # The media test's own output is shown, so a failure here is visible
-# instead of looking like an empty capture.
-"$BIN" media test --seconds 6 --udp 127.0.0.1:50000 --width 640 --height 480 --framerate 30 2>&1 |
-	sed 's/^/  /'
+# instead of looking like an empty capture. It has to use the same source
+# as step 1: a build server has no screen to capture.
+"$BIN" media test --seconds 6 --udp 127.0.0.1:50000 --width 640 --height 480 --framerate 30 \
+	"${TEST_ARGS[@]}" 2>&1 | sed 's/^/  /'
 sleep 2
 if [ "$CAPTURED" = "1" ]; then
 	kill "$CAP_PID" 2>/dev/null
