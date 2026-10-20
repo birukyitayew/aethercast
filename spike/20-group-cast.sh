@@ -25,6 +25,23 @@ TS="$OUT/group-received.ts"
 mkdir -p "$OUT"
 rm -f "$TS"
 
+# Wait for the transport stream to become readable.
+#
+# The sink writes the file as the packets arrive, so the file can have its
+# final size before its tables are readable. Retrying here turns a race
+# into a wait, instead of a false failure.
+wait_for_streams() { # file timeout_seconds
+	local file="$1" limit="$2" waited=0
+	while [ "$waited" -lt "$limit" ]; do
+		if ffprobe -v error -select_streams v:0 -show_entries stream=id -of csv=p=0 "$file" 2>/dev/null | grep -q .; then
+			return 0
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+	return 1
+}
+
 fail=0
 check() {
 	if [ "$2" = "$3" ]; then
@@ -46,9 +63,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# libpulse aborts on default server discovery on this machine, so the
+# PipeWire-Pulse socket has to be named explicitly.
+export PULSE_SERVER="unix:${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native"
+AUDIO_DEVICE="${AUDIO_DEVICE:-alsa_output.pci-0000_00_1f.3.analog-stereo.monitor}"
+
 echo "== starting the source, which forms the group =="
 timeout $((SECS + 60)) ./target/release/aethercastd cast --group --port 7236 --seconds "$SECS" \
-	> "$OUT/group-source.log" 2>&1 &
+	--audio --audio-device "$AUDIO_DEVICE" > "$OUT/group-source.log" 2>&1 &
 SOURCE=$!
 
 # Wait for the group interface, then give it an address.
@@ -92,6 +114,7 @@ if [ "$SIZE" = "0" ]; then
 	exit 1
 fi
 echo "  transport stream: $SIZE bytes"
+wait_for_streams "$TS" 10 || echo "  (the stream did not become readable)"
 VIDEO_PID=$(ffprobe -v error -select_streams v:0 -show_entries stream=id -of csv=p=0 "$TS" 2>/dev/null | head -1)
 AUDIO_PID=$(ffprobe -v error -select_streams a:0 -show_entries stream=id -of csv=p=0 "$TS" 2>/dev/null | head -1)
 check "the video PID is the WFD one (0x1011)" "0x1011" "$VIDEO_PID"

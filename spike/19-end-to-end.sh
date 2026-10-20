@@ -24,6 +24,23 @@ TS="$OUT/received.ts"
 LOG="$OUT/end-to-end.log"
 rm -f "$TS" "$LOG"
 
+# Wait for the transport stream to become readable.
+#
+# The sink writes the file as the packets arrive, so the file can have its
+# final size before its tables are readable. Retrying here turns a race
+# into a wait, instead of a false failure.
+wait_for_streams() { # file timeout_seconds
+	local file="$1" limit="$2" waited=0
+	while [ "$waited" -lt "$limit" ]; do
+		if ffprobe -v error -select_streams v:0 -show_entries stream=id -of csv=p=0 "$file" 2>/dev/null | grep -q .; then
+			return 0
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+	return 1
+}
+
 fail=0
 check() { # description expected actual
 	if [ "$2" = "$3" ]; then
@@ -85,6 +102,7 @@ fi
 
 echo
 echo "== validating the transport stream =="
+wait_for_streams "$TS" 10 || echo "  (the stream did not become readable)"
 PROBE=$(ffprobe -v error -show_entries stream=index,codec_name,codec_type,id,width,height -of csv=p=0 "$TS" 2>/dev/null)
 echo "$PROBE" | sed 's/^/  /'
 VIDEO_PID=$(ffprobe -v error -select_streams v:0 -show_entries stream=id -of csv=p=0 "$TS" 2>/dev/null | head -1)
