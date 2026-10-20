@@ -1,0 +1,25 @@
+# Build outputs
+build/
+builddir/
+_build/
+target/
+dist/
+*.o
+*.so
+*.a
+
+# Editors and IDEs
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Local research artifacts and captures
+*.pcap
+*.pcapng
+*.log
+.cache/
