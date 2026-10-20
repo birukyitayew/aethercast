@@ -51,6 +51,59 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-20 — The sink is an Android box, and AOSP's WFD sink is talkative
+
+The TV's screen says **"waiting for connection"** and names the device
+**`android_b313`**. That name is the AOSP convention, so the sink is an
+**Android TV or an Android TV box** — which fits the AltoBeam Wi-Fi chip
+perfectly (AltoBeam is common in low-cost Android boxes and dongles).
+
+That is not a cosmetic detail; it changes what we should expect:
+
+- Android's Wi-Fi Display sink is **AOSP's** `WifiDisplaySinkController`
+  and `libwfd`.
+- **AOSP's sink sends periodic probe requests carrying its own WFD
+  information element** while it is waiting for a source. It is one of
+  the chattier WFD implementations.
+- Our capture saw **zero** probe requests from any device across three
+  channels and ~45 seconds — and only two from a phone in the earlier
+  30-second capture.
+
+So a working AOSP sink on 2.4 GHz should have been impossible to miss.
+Three readings follow:
+
+1. **The sink's P2P stack is on 5 GHz.** Our adapter is Band 1 only, so
+   we cannot see it. Fits the observation exactly.
+2. **The box's screen says "waiting for connection" but its Wi-Fi Direct
+   stack never started.** Cheap Android boxes ship broken or vendor-
+   mangled Wi-Fi drivers, and the screen is served by an app that does
+   not necessarily depend on the P2P stack working. If this is the case,
+   *no* source could ever connect to it, and that is a sink defect
+   rather than a source defect.
+3. **The screen is not a Wi-Fi Display sink at all.** "Screen sharing" on
+   an Android box may be a vendor app, a DLNA/MediaShare app, or the
+   Google Cast path — and the box's device name is what a *Cast* or
+   *DLNA* screen would show too.
+
+Reading 2 and 3 are cheap to exclude, and both change the plan, so the
+next step is to fingerprint the box on the LAN rather than to keep
+poking at the radio: when it leaves the screen-share screen it rejoins
+the network, and then its ports and mDNS advertisements tell us exactly
+which protocol it speaks.
+
+**What we will build either way.** The provider architecture means the
+answer does not change the design, only the order:
+
+| What the box speaks | Our provider | Status |
+| --- | --- | --- |
+| Miracast over P2P (needs 5 GHz) | WFD P2P | built, waiting on a 5 GHz radio |
+| Miracast over infrastructure | WFD MICE | not started |
+| Google Cast | Cast control-plane | researched, not started |
+| DLNA/UPnP | DLNA | researched, not started |
+| AirPlay | AirPlay sender | researched, not started |
+
+---
+
 ## 2026-10-20 — The sweep: the software side is now exhausted
 
 The multi-channel capture finished. It is the most informative result of
