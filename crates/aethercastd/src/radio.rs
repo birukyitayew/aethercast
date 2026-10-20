@@ -141,6 +141,91 @@ impl Radio {
         Ok(())
     }
 
+    /// The Wi-Fi Direct group interfaces that currently exist.
+    ///
+    /// The group interface is how the daemon learns that a group formed:
+    /// the `P2P-GROUP-STARTED` event is written to the supplicant's log
+    /// rather than to the control socket, because the group interface is
+    /// an internal device with no control socket of its own. Watching the
+    /// network interfaces is unprivileged and does not depend on how the
+    /// supplicant chooses to publish its events.
+    pub fn p2p_group_interfaces(&self) -> Vec<String> {
+        let mut interfaces = Vec::new();
+        let Ok(entries) = std::fs::read_dir("/sys/class/net") else {
+            return interfaces;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("p2p-") {
+                interfaces.push(name);
+            }
+        }
+        interfaces.sort();
+        interfaces
+    }
+
+    /// The IPv4 address of an interface.
+    pub fn interface_address(interface: &str) -> Option<std::net::Ipv4Addr> {
+        if_addrs::get_if_addrs()
+            .ok()?
+            .into_iter()
+            .find(|addr| addr.name == interface)
+            .and_then(|addr| match addr.addr {
+                if_addrs::IfAddr::V4(v4) => Some(v4.ip),
+                _ => None,
+            })
+    }
+
+    /// Wait for a new Wi-Fi Direct group interface to appear.
+    ///
+    /// Returns the interface name and its address once both are known.
+    pub fn wait_for_group_interface(
+        &mut self,
+        before: &[String],
+        timeout: std::time::Duration,
+    ) -> RadioResult<Option<(String, std::net::Ipv4Addr)>> {
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            for interface in self.p2p_group_interfaces() {
+                if before.contains(&interface) {
+                    continue;
+                }
+                if let Some(address) = Self::interface_address(&interface) {
+                    return Ok(Some((interface, address)));
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        Ok(None)
+    }
+
+    /// Wait for a Wi-Fi Direct group to form, collecting the events.
+    ///
+    /// Returns the group when it starts, or `None` if the deadline passes
+    /// or the formation fails.
+    pub fn wait_for_group(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> RadioResult<Option<crate::p2p::GroupStarted>> {
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            match self.sup.poll_event(std::time::Duration::from_millis(500)) {
+                Ok(Some(line)) => match crate::p2p::Event::parse(&line) {
+                    Some(crate::p2p::Event::GroupStarted(group)) => {
+                        return Ok(Some(group));
+                    }
+                    Some(crate::p2p::Event::GroupFormationFailure(_)) => {
+                        return Ok(None);
+                    }
+                    _ => {}
+                },
+                Ok(None) => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(None)
+    }
+
     /// The radio-work queue.
     pub fn radio_work(&mut self) -> RadioResult<Vec<RadioWork>> {
         let out = self.sup.request("RADIO_WORK show")?;
@@ -254,6 +339,54 @@ impl Radio {
             }
         }
         Ok(peers)
+    }
+
+    /// Become the Group Owner on our own, optionally on a given frequency.
+    ///
+    /// The frequency matters on a single-radio adapter: a group that
+    /// cannot share the station's channel fails with `-2` (channel
+    /// unavailability).
+    pub fn p2p_group_add(&mut self, freq: Option<u32>) -> RadioResult<()> {
+        let command = match freq {
+            Some(freq) => format!("P2P_GROUP_ADD freq={freq}"),
+            None => "P2P_GROUP_ADD".to_string(),
+        };
+        self.sup.request(&command)?;
+        Ok(())
+    }
+
+    /// Stay discoverable as a Wi-Fi Direct device.
+    ///
+    /// This is the correct shape for a Miracast source: the **sink**
+    /// initiates the connection, and wpa_supplicant answers the group
+    /// negotiation, making us the Group Owner with the sink attached. An
+    /// autonomous group (`P2P_GROUP_ADD`) is the opposite — it is removed
+    /// again as soon as it has no client.
+    pub fn p2p_listen(&mut self) -> RadioResult<()> {
+        self.sup.request("P2P_LISTEN")?;
+        Ok(())
+    }
+
+    /// Tear the group down.
+    pub fn p2p_group_remove(&mut self) -> RadioResult<()> {
+        self.sup.request("P2P_GROUP_REMOVE *")?;
+        Ok(())
+    }
+
+    /// The details of one group member.
+    pub fn p2p_group_member(&mut self, address: &str) -> RadioResult<String> {
+        Ok(self.sup.request(&format!("P2P_GROUP_MEMBER {address}"))?)
+    }
+
+    /// Check the peer's provisioning method.
+    pub fn p2p_prov_disc(&mut self, address: &str) -> RadioResult<String> {
+        Ok(self.sup.request(&format!("P2P_PROV_DISC {address} pbc"))?)
+    }
+
+    /// Invite a peer into a group we own.
+    pub fn p2p_connect(&mut self, address: &str) -> RadioResult<()> {
+        self.sup.request(&format!("P2P_CONNECT {address} pbc"))?;
+        Ok(())
     }
 
     /// Details for one peer.

@@ -6,6 +6,7 @@
 
 mod discovery;
 mod media;
+mod p2p;
 mod radio;
 mod rtsp;
 mod supplicant;
@@ -65,6 +66,47 @@ enum Command {
     /// Run the WFD RTSP handshake against a sink.
     #[command(subcommand)]
     Rtsp(RtspCommand),
+    /// Wi-Fi Direct group formation.
+    #[command(subcommand)]
+    P2p(P2pCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum P2pCommand {
+    /// Become the Group Owner and wait for a sink to join.
+    Group(P2pGroupArgs),
+    /// Invite a peer into a group we own.
+    Connect(P2pConnectArgs),
+    /// Stay discoverable and wait for a sink to connect to us.
+    Listen(P2pListenArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct P2pListenArgs {
+    /// How long to stay discoverable, in seconds.
+    #[arg(long, default_value_t = 120)]
+    seconds: u32,
+}
+
+#[derive(clap::Args, Debug)]
+struct P2pGroupArgs {
+    /// The frequency for the group, in MHz. On a single-radio adapter the
+    /// group has to share the station's channel.
+    #[arg(long)]
+    freq: Option<u32>,
+    /// How long to wait for a member, in seconds.
+    #[arg(long, default_value_t = 60)]
+    wait: u32,
+}
+
+#[derive(clap::Args, Debug)]
+struct P2pConnectArgs {
+    /// The peer's P2P device address.
+    #[arg(long)]
+    peer: String,
+    /// How long to wait for the group, in seconds.
+    #[arg(long, default_value_t = 30)]
+    wait: u32,
 }
 
 #[derive(Subcommand, Debug)]
@@ -174,7 +216,124 @@ fn main() -> Result<()> {
         Command::Media(MediaCommand::Probe) => media_probe(&cli),
         Command::Media(MediaCommand::Test(args)) => media_test(&cli, args),
         Command::Rtsp(RtspCommand::Serve(args)) => rtsp_serve(&cli, args),
+        Command::P2p(P2pCommand::Group(args)) => p2p_group(&cli, radio, args),
+        Command::P2p(P2pCommand::Connect(args)) => p2p_connect(&cli, radio, args),
+        Command::P2p(P2pCommand::Listen(args)) => p2p_listen(&cli, radio, args),
     }
+}
+
+/// Stay discoverable, the way a Miracast source has to, and wait for a sink
+/// to connect.
+fn p2p_listen(cli: &Cli, mut radio: Radio, args: &P2pListenArgs) -> Result<()> {
+    // A sink that filters on the WFD information element will not answer
+    // us without one.
+    let ie = wfd::source_ie(rtsp::DEFAULT_CONTROL_PORT, 200);
+    radio.set_wfd_ie(&ie)?;
+    println!("WFD element armed, staying discoverable for {}s", args.seconds);
+
+    radio.p2p_listen()?;
+    println!("listening: a sink can now find us");
+
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(args.seconds as u64);
+    let mut announced = Vec::new();
+    while std::time::Instant::now() < deadline {
+        // A group interface with an address means a sink has joined.
+        for interface in radio.p2p_group_interfaces() {
+            if announced.contains(&interface) {
+                continue;
+            }
+            if let Some(address) = Radio::interface_address(&interface) {
+                announced.push(interface.clone());
+                println!("a sink joined on {interface} ({address})");
+                println!("the RTSP server must listen on {address}:7236");
+            }
+        }
+        // Report whatever the supplicant tells us.
+        if let Ok(Some(line)) = radio.supplicant().poll_event(std::time::Duration::from_millis(200)) {
+            if let Some(event) = p2p::Event::parse(&line) {
+                match event {
+                    p2p::Event::DeviceFound(text) => {
+                        println!("device found: {text}");
+                    }
+                    p2p::Event::Other(text) if text.contains("P2P-") => {
+                        println!("event: {text}");
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    println!("the listen window closed");
+    Ok(())
+}
+
+/// Become the Group Owner and wait for a sink to join.
+fn p2p_group(cli: &Cli, mut radio: Radio, args: &P2pGroupArgs) -> Result<()> {
+    // The list has to be taken *before* the group is created, otherwise
+    // the new interface is already in it.
+    let before = radio.p2p_group_interfaces();
+    radio.p2p_group_add(args.freq)?;
+    println!("group requested (freq: {:?})", args.freq);
+    // The group interface is the reliable signal: the group-start event
+    // goes to the supplicant's log, not to the control socket.
+    let interface = radio.wait_for_group_interface(
+        &before,
+        std::time::Duration::from_secs(args.wait as u64),
+    )?;
+    let group = radio.wait_for_group(std::time::Duration::from_secs(3))?;
+    match (interface, group) {
+        (Some((interface, address)), _) => {
+            println!("group started");
+            println!("  interface   : {interface}");
+            println!("  address     : {address}");
+            println!("  the RTSP server must listen on {address}:7236");
+        }
+        (None, Some(group)) => {
+            println!("group started on {}", group.interface);
+        }
+        (None, None) => {
+            println!("no group formed within {}s", args.wait);
+            let work = radio.radio_work()?;
+            println!(
+                "  radio-work queue: {} item(s)",
+                work.len()
+            );
+            for item in work.iter().take(4) {
+                println!(
+                    "    - {} started={} age={:.0}s",
+                    item.kind,
+                    if item.started { "yes" } else { "no" },
+                    item.age_secs
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Invite a peer into a group we own.
+fn p2p_connect(cli: &Cli, mut radio: Radio, args: &P2pConnectArgs) -> Result<()> {
+    println!("provisioning {}", args.peer);
+    match radio.p2p_prov_disc(&args.peer) {
+        Ok(text) => println!("  {text}"),
+        Err(e) => println!("  provisioning discovery failed: {e}"),
+    }
+    radio.p2p_connect(&args.peer)?;
+    println!("group requested for {}", args.peer);
+    let group = radio.wait_for_group(std::time::Duration::from_secs(args.wait as u64))?;
+    match group {
+        Some(group) => {
+            println!("group started on {}", group.interface);
+            if let Ok(members) = radio.p2p_peers() {
+                for member in members {
+                    println!("  member: {member}");
+                }
+            }
+        }
+        None => println!("no group formed within {}s", args.wait),
+    }
+    Ok(())
 }
 
 /// Run the WFD RTSP handshake against the first sink that connects.

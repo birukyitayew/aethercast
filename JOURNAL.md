@@ -51,6 +51,40 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-20 — Milestone 4: Wi-Fi Direct, and the wrong model of it
+
+**What we learned by trying to form a group on this hardware**
+
+`aethercastd p2p group` asks `wpa_supplicant` to become a Group Owner on its own. It works — the interface `p2p-wlan0-0` appears with `type P2P-GO` — and then the group is **removed again within milliseconds**, because an autonomous group with no client attached has no reason to exist. The supplicant's log says it plainly:
+
+```
+P2P-GROUP-STARTED p2p-wlan0-3 GO ssid="DIRECT-I1" freq=2412 go_dev_addr=f8:da:0c:0c:c0:11
+p2p-wlan0-3: interface state ENABLED->DISABLED
+AP-DISABLED
+CTRL-EVENT-DISCONNECTED reason=3 locally_generated=1
+nl80211: deinit ifname=p2p-wlan0-3
+```
+
+So the autonomous Group Owner is the wrong model for Miracast. **The sink initiates**: the source stays discoverable, the sink finds it, and the group forms with the sink attached — which is why the group then has a client, an address, and a reason to live. `aethercastd p2p listen` implements that: arm the WFD element, `P2P_LISTEN`, and wait for a group interface that has an IPv4 address, which is the signal that a sink has joined.
+
+**Three things that cost time and are worth writing down**
+
+1. **The group-start event does not reach the control socket.** It is written to the supplicant's log instead, because the P2P group interface is an internal device with no control socket of its own. The daemon therefore watches `/sys/class/net` for a new `p2p-*` interface, and reads its address with `getifaddrs`. That is unprivileged and does not depend on how the supplicant chooses to publish its events.
+2. **The snapshot has to be taken before the group is created.** Taking the list of interfaces afterwards means the new one is already in it, and the group is never noticed. (Our first implementation made exactly this mistake.)
+3. **The group interface has no address until a client attaches**, so "the interface exists" is not enough — the signal is "the interface exists *and* has an IPv4 address". That address is the address the sink will use to reach our RTSP server.
+
+**Where the project stands**
+
+| Piece | State |
+| --- | --- |
+| Radio health, wedge recovery, WFD element | done |
+| P2P discovery, listen mode, group detection | done |
+| WFD RTSP handshake M1-M7 | done, tested against a mock sink |
+| Media pipeline, WFD conformance | done, all checks pass |
+| **A sink that answers** | **the one missing thing** |
+
+---
+
 ## 2026-10-20 — Milestone 3: the WFD RTSP handshake
 
 **What we built**
