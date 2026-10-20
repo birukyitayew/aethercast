@@ -802,7 +802,9 @@ fn media_test(cli: &Cli, args: &MediaTestArgs) -> Result<()> {
     }
     built.pipeline.set_state(gstreamer::State::Null).ok();
 
+    // In UDP mode there is no file: the report must not claim otherwise.
     let size = std::fs::metadata(&args.out).map(|m| m.len()).unwrap_or(0);
+    let streaming = args.udp.is_some();
     if cli.json {
         println!(
             "{}",
@@ -820,12 +822,21 @@ fn media_test(cli: &Cli, args: &MediaTestArgs) -> Result<()> {
             }))?
         );
     } else {
-        println!(
-            "wrote {} bytes to {} (encoder: {} / {:?})",
-            size, args.out, built.encoder_element, built.encoder
-        );
+        if streaming {
+            println!(
+                "streamed to {} (encoder: {} / {:?})",
+                args.udp.as_deref().unwrap_or("-"),
+                built.encoder_element,
+                built.encoder
+            );
+        } else {
+            println!(
+                "wrote {} bytes to {} (encoder: {} / {:?})",
+                size, args.out, built.encoder_element, built.encoder
+            );
+        }
     }
-    if args.udp.is_none() && size == 0 {
+    if !streaming && size == 0 {
         anyhow::bail!("the pipeline produced no data");
     }
     Ok(())

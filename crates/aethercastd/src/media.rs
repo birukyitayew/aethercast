@@ -245,7 +245,7 @@ pub fn build(profile: &Profile, sink: &Sink) -> Result<Pipeline> {
     // `GstQueueLeaky`, so the value is set from its string name.
     let queue = gst::ElementFactory::make("queue").build()?;
     set_enum(&queue, "leaky", "downstream");
-    set_uint(&queue, "max-size-buffers", 1);
+    set_number(&queue, "max-size-buffers", 1);
 
     // --- encode ---
     let (encoder_el, encoder_kind) = make_encoder(encoder_choice)?;
@@ -256,7 +256,7 @@ pub fn build(profile: &Profile, sink: &Sink) -> Result<Pipeline> {
     // --- mux ---
     let mux = gst::ElementFactory::make("mpegtsmux").build()?;
     // Seven TS packets per datagram, for UDP streaming.
-    set_int(&mux, "alignment", 7);
+    set_number(&mux, "alignment", 7);
     //
     // The WFD PIDs are chosen by the *request pad names* below, not by a
     // property: `sink_4113` is 0x1011 and `sink_4352` is 0x1100. GStreamer
@@ -316,7 +316,7 @@ pub fn build(profile: &Profile, sink: &Sink) -> Result<Pipeline> {
         let convert = gst::ElementFactory::make("audioconvert").build()?;
         let resample = gst::ElementFactory::make("audioresample").build()?;
         let encode = gst::ElementFactory::make("avenc_aac").build()?;
-        set_int(&encode, "bitrate", 128_000);
+        set_number(&encode, "bitrate", 128_000);
         let audio_pad = mux
             .request_pad_simple(AUDIO_PAD)
             .ok_or_else(|| Error::Other(format!("mpegtsmux has no {AUDIO_PAD} request pad")))?;
@@ -342,11 +342,11 @@ pub fn build(profile: &Profile, sink: &Sink) -> Result<Pipeline> {
         }
         Sink::Udp { host, port } => {
             let payloader = gst::ElementFactory::make("rtpmp2tpay").build()?;
-            set_uint(&payloader, "pt", RTP_PAYLOAD_TYPE as u32);
-            set_uint(&payloader, "mtu", RTP_MTU);
+            set_number(&payloader, "pt", RTP_PAYLOAD_TYPE as u32);
+            set_number(&payloader, "mtu", RTP_MTU);
             let sink_element = gst::ElementFactory::make("udpsink").build()?;
             set_str(&sink_element, "host", host);
-            set_int(&sink_element, "port", *port as i32);
+            set_number(&sink_element, "port", *port as u32);
             pipeline.add(&payloader)?;
             pipeline.add(&sink_element)?;
             mux.link(&payloader)?;
@@ -394,17 +394,16 @@ fn set_bool(element: &gst::Element, name: &str, value: bool) {
     }
 }
 
-/// Set an unsigned property, if the element has one of that type.
-fn set_uint(element: &gst::Element, name: &str, value: u32) {
+/// Set a numeric property, whatever its signedness.
+///
+/// The same property is signed in one GStreamer version and unsigned in
+/// another - `udpsink`'s port is the one that bit us - so a number is set
+/// as whichever type the element actually declares.
+fn set_number(element: &gst::Element, name: &str, value: u32) {
     if has_type(element, name, glib::Type::U32) {
         element.set_property(name, value);
-    }
-}
-
-/// Set a signed property, if the element has one of that type.
-fn set_int(element: &gst::Element, name: &str, value: i32) {
-    if has_type(element, name, glib::Type::I32) {
-        element.set_property(name, value);
+    } else if has_type(element, name, glib::Type::I32) {
+        element.set_property(name, value as i32);
     }
 }
 
@@ -445,24 +444,24 @@ fn configure_encoder(element: &gst::Element, profile: &Profile, choice: Encoder)
         Encoder::OpenH264 => {
             // openh264enc takes the bitrate in bits per second. The rate
             // control mode is an enumeration, so it is set by name.
-            set_uint(element, "bitrate", profile.bitrate_bps);
+            set_number(element, "bitrate", profile.bitrate_bps);
             set_enum(element, "rate-control", "bitrate");
         }
         Encoder::X264 => {
             // x264enc takes the bitrate in kbit/s, and its B-frame setting
             // is a *count*: WFD forbids B-frames, so it is zero.
-            set_uint(element, "bitrate", profile.bitrate_bps / 1000);
-            set_uint(element, "bframes", 0);
+            set_number(element, "bitrate", profile.bitrate_bps / 1000);
+            set_number(element, "bframes", 0);
             set_bool(element, "sliced-threads", true);
             set_bool(element, "byte-stream", true);
             set_bool(element, "aud", true);
-            set_uint(element, "key-int-max", profile.framerate as u32);
+            set_number(element, "key-int-max", profile.framerate as u32);
             set_enum(element, "tune", "zerolatency");
         }
         Encoder::Vaapi => {
             // Both VA-API encoders take the bitrate in kbit/s.
-            set_uint(element, "bitrate", profile.bitrate_bps / 1000);
-            set_uint(element, "key-int-max", profile.framerate as u32);
+            set_number(element, "bitrate", profile.bitrate_bps / 1000);
+            set_number(element, "key-int-max", profile.framerate as u32);
             set_bool(element, "b-frames", false);
         }
         Encoder::Auto => {}
@@ -478,16 +477,16 @@ mod tests {
         gst::init().ok();
         let queue = gst::ElementFactory::make("queue").build().unwrap();
         // A property the element does not have.
-        set_uint(&queue, "no-such-property", 1);
+        set_number(&queue, "no-such-property", 1);
         set_bool(&queue, "no-such-property", true);
-        set_int(&queue, "no-such-property", 1);
+        set_number(&queue, "no-such-property", 1);
         set_str(&queue, "no-such-property", "x");
         // A property that exists, with the right type.
-        set_uint(&queue, "max-size-buffers", 1);
+        set_number(&queue, "max-size-buffers", 1);
         // A property that exists, with the wrong type: this must be skipped
         // rather than panic, because the encoders disagree about their
         // property types.
-        set_uint(&queue, "leaky", 2);
+        set_number(&queue, "leaky", 2);
     }
 
     #[test]
