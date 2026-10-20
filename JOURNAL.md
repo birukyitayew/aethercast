@@ -51,6 +51,64 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-20 — The sweep: the software side is now exhausted
+
+The multi-channel capture finished. It is the most informative result of
+the project so far, and it is mostly negative — which is progress.
+
+**What the sweep found**
+
+| | Channel 1 | Channel 6 | Channel 11 |
+| --- | --- | --- | --- |
+| Frames | 3,222 | 0 | 0 |
+| Beacons | 185 (the `Biruk` AP) | 0 | 0 |
+| WFD information elements | none | none | none |
+| P2P information elements | none | none | none |
+| Probe requests | none | none | none |
+| AltoBeam transmitters | none | none | none |
+
+**The sink was in Miracast mode the whole time.** It is absent from the
+neighbour table, and a sink in Miracast mode leaves the access point to
+form a Wi-Fi Direct group. So the TV was advertising — just not where we
+could hear it.
+
+**What that rules out**
+
+- Our radio is healthy: the radio-work queue is empty, searches run to
+  completion, and the access point's beacons are captured in the
+  expected count.
+- Our element is now correct under every reading of the specification
+  (`0x1010`, symmetric), and discovery was re-run with it.
+- Both directions were exercised: scanning for sinks, and staying
+  discoverable for a sink-initiated connection. Neither produced a peer.
+- The sink is not advertising a P2P information element on 2.4 GHz at
+  all, which rules out a plain "it is on channel 6" explanation.
+
+**What is left**
+
+1. **The sink's Miracast listener is on 5 GHz.** Our adapter is Band 1
+   only (`iw phy phy0 info`), and a monitor-mode capture cannot see a
+   band the radio does not have. This fits every observation.
+2. **The "screen share" screen is not a Wi-Fi Display sink.** Some sets
+   label a vendor app or a Chromecast/AirPlay menu "screen share".
+3. The sink answers only probes that carry a WFD element *and* the
+   element it wants — the `arm --device-info` escape hatch exists for
+   that, but we need the sink's own bytes to know what it wants.
+
+**The product answer, whatever the cause**
+
+AetherCast must be able to say *why* it found nothing. The states we
+can already detect:
+
+- the adapter is 2.4 GHz only, and sinks advertise on 5 GHz;
+- the sink requires HDCP, which we cannot provide;
+- the sink's element says the session is unavailable;
+- the radio-work queue is wedged.
+
+GNOME Network Displays shows an empty list for all of them.
+
+---
+
 ## 2026-10-20 — The sink may be filtering us: four mechanisms, and a bug in our own element
 
 The user asked the right question: maybe the TV only accepts a phone or a
