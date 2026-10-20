@@ -277,6 +277,61 @@ we cannot offer it.
 
 ---
 
+## 2026-10-21 — Milestone 6: a cast over the Wi-Fi Direct group interface
+
+The last untested line in the product is now tested. With the group
+formed, the RTSP server bound to the **group interface's** address, and a
+sink connecting to that address:
+
+```
+  the group is up on p2p-wlan0-4 (192.168.43.1)
+  a sink must join the group and connect to 192.168.43.1:7236
+  sink connected from 192.168.1.1:41848
+  -> M1 OPTIONS (Require: org.wfa.wfd1.0)
+  ...
+  <- M7 PLAY
+  -> M7 100 Continue
+  handshake reached Playing
+  streaming to 192.168.43.1:50000 for 12s
+```
+
+and on the sink's side:
+
+```
+  [reference-sink] received 290 RTP packet(s), 381640 bytes of MPEG-TS
+  [reference-sink] RTP payload types: [33]
+```
+
+So the whole source path is proven end to end, on the same interface a
+real sink would use:
+
+| Step | Proven by |
+| --- | --- |
+| Discovery and the global WFD element | `aethercastd discover`, `arm` |
+| Group formation | `aethercastd p2p group` |
+| The RTSP server on the group's address | `spike/20-group-cast.sh` |
+| The media path | `spike/19-end-to-end.sh`, `spike/04-media-conformance.sh` |
+| The conformance of the stream | PID map, payload type, packetisation, PCR cadence |
+
+**What is still not proven**, and it is one thing: the **radio link
+itself**, because a second Wi-Fi Direct device is needed to join our
+group. Everything on either side of that link is done.
+
+**Two bugs in the check itself**, which is worth recording because the
+failure looked like a product bug:
+
+* the transport stream can have its final size before its tables are
+  readable, so the validation raced the writer;
+* the group test never asked for audio, and then it checked for an audio
+  PID that could not exist.
+
+The general lesson, and it is the same one the whole project is built
+on: **a check that cannot explain its own failure will be believed over
+the code.** Both were found by reading the actual output rather than the
+summary.
+
+---
+
 ## 2026-10-21 — Milestone 5: an end-to-end cast
 
 The TV could not be made to cooperate — it advertises nothing, its driver
