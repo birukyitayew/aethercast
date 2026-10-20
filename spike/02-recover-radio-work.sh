@@ -1,5 +1,5 @@
 #!/bin/bash
-# Castrel Phase 0 spike — recover a wedged wpa_supplicant radio-work queue.
+# AetherCast Phase 0 spike — recover a wedged wpa_supplicant radio-work queue.
 #
 # Symptom (reproduced on QCA9565/AR9565 + ath9k, Kali 2026.2):
 #   * The first P2P discovery scan never returns results.

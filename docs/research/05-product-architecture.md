@@ -1,4 +1,4 @@
-> **Naming note.** This note was written on 2026-10-20, when the project was still the codename "AetherCast". The project was renamed to **Castrel** the same day because the codename collided with prior art in this exact niche — see [ADR-0004](../adr/0004-codename-not-brand.md). "AetherCast" below refers to the codename.
+> **Naming note.** "AetherCast" is the project name. It collides with prior art in this niche (`ubports/aethercast`, Canonical's 2015 Ubuntu Miracast project). That is a known and accepted risk with an explicit rename trigger recorded in [ADR-0004](../adr/0004-name-aethercast.md).
 
 # 05 — Product and Architecture
 
@@ -111,7 +111,7 @@ The README adds two failure classes: NetworkManager must use `wpa_supplicant`, n
 | Canonical "Aethercast" | Miracast for Ubuntu, Launchpad project, 25 Dec 2015 ([Phoronix](https://www.phoronix.com/news/Aethercast-Ubuntu-WiDi)) | Same name and technology, prior use here |
 | Our own new repo | [`birukyitayew/aethercast`](https://github.com/birukyitayew/aethercast) | Public already; renaming is cheap now, expensive later |
 
-Treat it as a codename and run a two-week naming sprint before any Flathub submission: (1) trademark search in US, EU, and UK, registered and common-law; (2) code-host and package/app-ID search; (3) domains, handles, spelling, read-aloud; (4) brand-usage review, since "Miracast" and "Wi-Fi CERTIFIED" carry usage rules ([Wi-Fi Alliance brands](https://www.wi-fi.org/our-brands)). Naming territories: light/beam, bridge/relay, short invented words — provisional **uncleared** candidates *Lumenbeam*, *Castrel*, *Mirrorling*, *Waveline*. Avoid "Chromecast." Rename repo, D-Bus namespace, Flathub ID, and packages together; GitHub redirects are cheap, the rest is not.
+Treat it as a codename and run a two-week naming sprint before any Flathub submission: (1) trademark search in US, EU, and UK, registered and common-law; (2) code-host and package/app-ID search; (3) domains, handles, spelling, read-aloud; (4) brand-usage review, since "Miracast" and "Wi-Fi CERTIFIED" carry usage rules ([Wi-Fi Alliance brands](https://www.wi-fi.org/our-brands)). Naming territories: light/beam, bridge/relay, short invented words — provisional **uncleared** candidates *Lumenbeam*, *AetherCast*, *Mirrorling*, *Waveline*. Avoid "Chromecast." Rename repo, D-Bus namespace, Flathub ID, and packages together; GitHub redirects are cheap, the rest is not.
 
 ---
 

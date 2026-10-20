@@ -111,9 +111,9 @@ The subelement ID space is `0..11` (`MAX_WFD_SUBELEMS == 12`); the mapping is in
 | 4 | 3D Video Formats | 10 | MAC Information |
 | 5 | Content Protection | 11 | R2 Device Information |
 
-## What this means for Castrel
+## What this means for AetherCast
 
-1. **A "no sinks found" screen must have a diagnosis.** The single most useful thing Castrel can do on this hardware is say *"the Wi-Fi driver stopped completing scans; recovered by flushing the radio-work queue"* — instead of showing an empty list.
+1. **A "no sinks found" screen must have a diagnosis.** The single most useful thing AetherCast can do on this hardware is say *"the Wi-Fi driver stopped completing scans; recovered by flushing the radio-work queue"* — instead of showing an empty list.
 2. **Detect the wedge, don't retry blindly.** A P2P find that is rejected instantly, or a scan that returns `FAIL-BUSY`, is a hard signal to run the recovery path, not to try again.
 3. **Health-check the radio work queue.** `RADIO_WORK show` is a cheap, unprivileged probe. A queue that only grows, or a `p2p-scan` with `started=1` for more than a few seconds, is a fault condition.
 4. **Set the global WFD IE ourselves.** It is unprivileged, it is the difference between a discoverable and an undiscoverable source, and NetworkManager cannot do it.

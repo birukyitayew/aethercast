@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (2026-10-20, maintainer sign-off after research synthesis)
 - **Date:** 2026-10-20
-- **Deciders:** Biruk Yitayew, Castrel research team
+- **Deciders:** Biruk Yitayew, AetherCast research team
 
 ## Context
 
@@ -17,7 +17,7 @@ The research established:
 
 ## Decision
 
-**Castrel is licensed GPL-3.0-or-later.** Contributions are made under a **Developer Certificate of Origin**. We do **not** use a CLA.
+**AetherCast is licensed GPL-3.0-or-later.** Contributions are made under a **Developer Certificate of Origin**. We do **not** use a CLA.
 
 Concretely:
 

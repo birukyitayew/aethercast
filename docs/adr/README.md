@@ -47,4 +47,4 @@ Links to research, issues, specifications, or experiments.
 | [0001](0001-research-first-and-v1-scope.md) | Research first, Miracast source first | Accepted |
 | [0002](0002-rust-control-gstreamer-media.md) | Rust control plane, GStreamer media plane | Proposed |
 | [0003](0003-license-gpl3.md) | GPL-3.0-or-later, DCO, no CLA | Proposed |
-| [0004](0004-codename-not-brand.md) | "Castrel" is a codename, not a brand | Accepted |
+| [0004](0004-name-aethercast.md) | The project is named AetherCast; the name collision is a known risk | Accepted |

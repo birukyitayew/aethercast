@@ -2,11 +2,11 @@
 
 - **Status:** Accepted (2026-10-20, maintainer sign-off after research synthesis)
 - **Date:** 2026-10-20
-- **Deciders:** Biruk Yitayew, Castrel research team
+- **Deciders:** Biruk Yitayew, AetherCast research team
 
 ## Context
 
-Castrel needs to implement the WFD state machine, negotiate with untrusted sinks, drive a media pipeline, expose a stable API to a GUI and a CLI, and run headless on kiosk hardware.
+AetherCast needs to implement the WFD state machine, negotiate with untrusted sinks, drive a media pipeline, expose a stable API to a GUI and a CLI, and run headless on kiosk hardware.
 
 The research established two facts that shape this choice:
 
@@ -17,13 +17,13 @@ A monolithic C/GTK4 application inherits GND's coarse error model and makes head
 
 ## Decision
 
-**Castrel is a Rust control plane around a GStreamer media plane, exposed as a daemon with a versioned D-Bus API, a GTK4/libadwaita client, and a first-class CLI.**
+**AetherCast is a Rust control plane around a GStreamer media plane, exposed as a daemon with a versioned D-Bus API, a GTK4/libadwaita client, and a first-class CLI.**
 
 Concretely:
 
 | Component | Choice |
 | --- | --- |
-| Core / session daemon | Rust (`castreld`), single owner of the session state machine |
+| Core / session daemon | Rust (`aethercastd`), single owner of the session state machine |
 | Media pipeline | GStreamer, in a per-session child process so a media crash cannot take down the daemon |
 | Public API | Versioned D-Bus interface, method-per-operation, typed errors, stable bus name |
 | GUI | GTK4 + libadwaita, thin client over D-Bus |

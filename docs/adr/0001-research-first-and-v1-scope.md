@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-20
-- **Deciders:** Biruk Yitayew, Castrel research team
+- **Deciders:** Biruk Yitayew, AetherCast research team
 
 ## Context
 

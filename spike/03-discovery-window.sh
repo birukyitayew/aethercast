@@ -1,5 +1,5 @@
 #!/bin/bash
-# Castrel Phase 0 spike — supervised P2P discovery window.
+# AetherCast Phase 0 spike — supervised P2P discovery window.
 #
 # Prerequisite: the global WFD IE must be set, otherwise our probe requests
 # carry no WFD IE and a strict Miracast sink may ignore them:
@@ -34,7 +34,7 @@ trap 'kill $FOLLOW 2>/dev/null' EXIT
 
 say() { printf '%s %s\n' "$(date +%T)" "$*" | tee -a "$LOG"; }
 
-say "=== Castrel discovery window: $ROUNDS rounds x ${SECS}s ==="
+say "=== AetherCast discovery window: $ROUNDS rounds x ${SECS}s ==="
 say "station: $("${CTL[@]}" status | grep -E 'ssid=|freq=' | tr '\n' ' ')"
 
 for round in $(seq 1 "$ROUNDS"); do

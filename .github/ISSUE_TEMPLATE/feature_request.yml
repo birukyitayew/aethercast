@@ -14,7 +14,7 @@ body:
     id: proposal
     attributes:
       label: Proposed solution
-      description: What should Castrel do? Include sketches or examples if helpful.
+      description: What should AetherCast do? Include sketches or examples if helpful.
     validations:
       required: true
   - type: dropdown

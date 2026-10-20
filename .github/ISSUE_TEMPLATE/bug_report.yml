@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping make Castrel reliable. Casting bugs are usually hardware- and driver-specific, so please include as much environment detail as you can.
+        Thanks for helping make AetherCast reliable. Casting bugs are usually hardware- and driver-specific, so please include as much environment detail as you can.
 
         **Do not include Wi-Fi passwords, tokens, private screen captures, or other secrets.**
   - type: textarea
@@ -29,7 +29,7 @@ body:
       label: Steps to reproduce
       description: Include the exact commands or UI actions.
       placeholder: |
-        1. Open Castrel
+        1. Open AetherCast
         2. Put the TV in Miracast mode
         3. ...
     validations:

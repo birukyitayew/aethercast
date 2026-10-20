@@ -1,4 +1,4 @@
-> **Naming note.** This note was written on 2026-10-20, when the project was still the codename "AetherCast". The project was renamed to **Castrel** the same day because the codename collided with prior art in this exact niche — see [ADR-0004](../adr/0004-codename-not-brand.md). "AetherCast" below refers to the codename.
+> **Naming note.** "AetherCast" is the project name. It collides with prior art in this niche (`ubports/aethercast`, Canonical's 2015 Ubuntu Miracast project). That is a known and accepted risk with an explicit rename trigger recorded in [ADR-0004](../adr/0004-name-aethercast.md).
 
 # 02 — Wi-Fi Direct / P2P on Linux for a Miracast Source
 

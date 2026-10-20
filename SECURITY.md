@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Castrel is in the research phase. There are no supported releases yet. This policy will be updated before the first public release.
+AetherCast is in the research phase. There are no supported releases yet. This policy will be updated before the first public release.
 
 ## Reporting a vulnerability
 
@@ -28,7 +28,7 @@ If private reporting is unavailable, contact the maintainer, [@birukyitayew](htt
 ## Out of scope
 
 - DRM/HDCP circumvention requests
-- Vulnerabilities in third-party TVs, dongles, routers, or drivers that are not caused by Castrel
+- Vulnerabilities in third-party TVs, dongles, routers, or drivers that are not caused by AetherCast
 - Denial of service that requires physical access to the machine
 
 ## Disclosure

@@ -1,4 +1,4 @@
-# Castrel
+# AetherCast
 
 > A best-in-class open-source casting app for Linux — starting with Miracast.
 
@@ -6,7 +6,7 @@
 
 ## Why
 
-GNOME Network Displays proved that Linux screen casting is possible, but it is still fragile: discovery depends on the Wi-Fi radio and desktop portal, error messages are cryptic, audio setup can crash, and protocol support is narrow. Castrel aims to be the reliable, transparent, cross-desktop alternative:
+GNOME Network Displays proved that Linux screen casting is possible, but it is still fragile: discovery depends on the Wi-Fi radio and desktop portal, error messages are cryptic, audio setup can crash, and protocol support is narrow. AetherCast aims to be the reliable, transparent, cross-desktop alternative:
 
 - **Discovery that explains itself** — show why a TV is not visible instead of an empty list.
 - **One-click casting** — sane defaults, quality/latency presets, and fast recovery.
@@ -43,4 +43,4 @@ To be decided after the licensing and code-reuse research. If we reuse GPL-3.0 c
 
 ## Not affiliated with GNOME
 
-Castrel is an independent project. GNOME Network Displays is a separate project and a source of inspiration and prior art.
+AetherCast is an independent project. GNOME Network Displays is a separate project and a source of inspiration and prior art.

@@ -1,6 +1,6 @@
-# Contributing to Castrel
+# Contributing to AetherCast
 
-Castrel is in the research phase. The most valuable contributions right now are **evidence, protocol notes, hardware reports, and design critique** — not product code.
+AetherCast is in the research phase. The most valuable contributions right now are **evidence, protocol notes, hardware reports, and design critique** — not product code.
 
 ## Before you start
 
@@ -48,7 +48,7 @@ fix: handle RTSP timeout during M4
 
 ## Licensing
 
-Castrel is licensed **GPL-3.0-or-later** (see [ADR-0003](docs/adr/0003-license-gpl3.md)).
+AetherCast is licensed **GPL-3.0-or-later** (see [ADR-0003](docs/adr/0003-license-gpl3.md)).
 
 - **Sign off every commit** with the Developer Certificate of Origin: use `git commit -s` or `git commit --signoff`. A CI check enforces it on pull requests.
 - We do **not** use a CLA. The DCO gives us the copyright and licensing grant we need, without the friction that stops contributions.
