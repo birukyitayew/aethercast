@@ -277,6 +277,47 @@ we cannot offer it.
 
 ---
 
+## 2026-10-21 — Milestone 5: an end-to-end cast
+
+The TV could not be made to cooperate — it advertises nothing, its driver
+refuses to change channel, and it is a system app we must not touch. So
+the project stopped depending on it and **built its own sink**.
+
+`spike/18-reference-sink.py` plays the sink's role properly: it connects
+to the source's RTSP control port, answers M2, publishes its capabilities
+in M3, accepts M4, sends M6 and M7, and then **receives the RTP media
+and writes the transport stream to a file**.
+
+`spike/19-end-to-end.sh` runs the whole path and validates it:
+
+```
+$ ./spike/19-end-to-end.sh 12
+  [reference-sink] received 150 RTP packet(s), 406644 bytes of MPEG-TS
+  [reference-sink] RTP payload types: [33]
+  PASS  the video PID is the WFD one (0x1011)          0x1011
+  PASS  the audio PID is the WFD one (0x1100)          0x1100
+  PASS  the video codec                                h264
+  PASS  the audio codec                                aac
+== the source cast a conformant stream to a sink ==
+```
+
+**This is the first real cast in the project.** Screen capture, H.264
+Constrained Baseline encoding, MPEG-TS with the WFD PID map, RTP with
+payload type 33, and a sink that receives a stream ffprobe accepts.
+
+Two things this buys us beyond the demonstration:
+
+- **The media path is testable in CI**, with no hardware and no TV. The
+  reference sink is the project's own oracle.
+- **The product no longer depends on a broken device.** A real TV is now
+  a compatibility question, not a blocker.
+
+What is still missing for a physical sink: P2P group formation, and the
+sink connecting to our RTSP port on the group interface. The reference
+sink connects over the LAN instead, which is the only difference.
+
+---
+
 ## 2026-10-20 — Milestone 4: Wi-Fi Direct, and the wrong model of it
 
 **What we learned by trying to form a group on this hardware**

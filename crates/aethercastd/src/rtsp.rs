@@ -244,6 +244,19 @@ fn parse_rtp_port(value: &str, name: &str) -> Option<u16> {
     })
 }
 
+/// The outcome of a handshake with a sink.
+#[derive(Debug, Clone)]
+pub struct Session {
+    /// How far the handshake got.
+    pub stage: Stage,
+    /// The sink's address.
+    pub peer: std::net::SocketAddr,
+    /// What the sink told us it can accept.
+    pub capabilities: Option<SinkCapabilities>,
+    /// The RTP port the sink wants our media on, if it gave one.
+    pub rtp_port: Option<u16>,
+}
+
 /// What the handshake reached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
@@ -286,8 +299,9 @@ impl Server {
 
     /// Accept one sink and run the WFD handshake against it.
     ///
-    /// Returns the stage reached and the sink's capabilities.
-    pub fn handle_once(&self, log: &mut dyn FnMut(&str)) -> std::io::Result<(Stage, Option<SinkCapabilities>)> {
+    /// Returns the session: how far the handshake got, what the sink can
+    /// accept, and the RTP port it wants our media on.
+    pub fn handle_once(&self, log: &mut dyn FnMut(&str)) -> std::io::Result<Session> {
         let (mut stream, peer) = self.listener.accept()?;
         log(&format!("sink connected from {}", peer));
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -309,12 +323,12 @@ impl Server {
                 Ok(request) => request,
                 Err(e) => {
                     log(&format!("unparsable request: {e}"));
-                    return Ok((Stage::Connected, None));
+                    return Ok(self.session(peer, Stage::Connected, None));
                 }
             },
             Err(e) => {
                 log(&format!("no M2 from the sink: {e}"));
-                return Ok((Stage::Connected, None));
+                return Ok(self.session(peer, Stage::Connected, None));
             }
         };
         log(&format!("<- M2 {} {}", request.method, request.uri));
@@ -357,7 +371,7 @@ impl Server {
         let accepted = reply.starts_with("RTSP/1.0 200");
         if !accepted {
             log("the sink refused our format selection");
-            return Ok((Stage::M3, Some(capabilities)));
+            return Ok(self.session(peer, Stage::M3, Some(capabilities)));
         }
 
         // M5: trigger the sink's SETUP.
@@ -376,12 +390,12 @@ impl Server {
                 Ok(request) => request,
                 Err(e) => {
                     log(&format!("unparsable SETUP: {e}"));
-                    return Ok((Stage::M4, Some(capabilities)));
+                    return Ok(self.session(peer, Stage::M4, Some(capabilities)));
                 }
             },
             Err(e) => {
                 log(&format!("no SETUP from the sink: {e}"));
-                return Ok((Stage::M4, Some(capabilities)));
+                return Ok(self.session(peer, Stage::M4, Some(capabilities)));
             }
         };
         log(&format!(
@@ -404,12 +418,12 @@ impl Server {
                 Ok(request) => request,
                 Err(e) => {
                     log(&format!("unparsable PLAY: {e}"));
-                    return Ok((Stage::M6, Some(capabilities)));
+                    return Ok(self.session(peer, Stage::M6, Some(capabilities)));
                 }
             },
             Err(e) => {
                 log(&format!("no PLAY from the sink: {e}"));
-                return Ok((Stage::M6, Some(capabilities)));
+                return Ok(self.session(peer, Stage::M6, Some(capabilities)));
             }
         };
         log(&format!("<- M7 {}", request.method));
@@ -419,7 +433,26 @@ impl Server {
         write_line(&mut stream, &response.to_wire())?;
         log("-> M7 100 Continue");
 
-        Ok((Stage::Playing, Some(capabilities)))
+        Ok(self.session(peer, Stage::Playing, Some(capabilities)))
+    }
+
+    /// Build a session description from a handshake outcome.
+    fn session(
+        &self,
+        peer: std::net::SocketAddr,
+        stage: Stage,
+        capabilities: Option<SinkCapabilities>,
+    ) -> Session {
+        let rtp_port = capabilities
+            .as_ref()
+            .and_then(|c| c.rtp_port0)
+            .filter(|port| *port != 0);
+        Session {
+            stage,
+            peer,
+            capabilities,
+            rtp_port,
+        }
     }
 }
 

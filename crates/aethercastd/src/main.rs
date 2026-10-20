@@ -73,6 +73,40 @@ enum Command {
     /// Work with WFD information elements.
     #[command(subcommand)]
     Wfd(WfdCommand),
+    /// Cast to a sink: run the WFD handshake and stream to it.
+    Cast(CastArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct CastArgs {
+    /// The RTSP control port to listen on.
+    #[arg(long, default_value_t = rtsp::DEFAULT_CONTROL_PORT)]
+    port: u16,
+    /// How long to wait for a sink to connect, in seconds.
+    #[arg(long, default_value_t = 60)]
+    wait: u32,
+    /// How long to stream for, in seconds.
+    #[arg(long, default_value_t = 30)]
+    seconds: u32,
+    /// Width in pixels.
+    #[arg(long, default_value_t = 640)]
+    width: i32,
+    /// Height in pixels.
+    #[arg(long, default_value_t = 480)]
+    height: i32,
+    /// Frames per second. Zero keeps the capture rate.
+    #[arg(long, default_value_t = 30)]
+    framerate: i32,
+    /// Bitrate in kbit/s.
+    #[arg(long, default_value_t = 2000)]
+    bitrate: u32,
+    /// Also capture the system audio mix.
+    #[arg(long)]
+    audio: bool,
+    /// The PulseAudio source to capture. Use the monitor of the default
+    /// sink for the system mix.
+    #[arg(long, default_value = "default")]
+    audio_device: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -241,7 +275,80 @@ fn main() -> Result<()> {
         Command::P2p(P2pCommand::Connect(args)) => p2p_connect(&cli, radio, args),
         Command::P2p(P2pCommand::Listen(args)) => p2p_listen(&cli, radio, args),
         Command::Wfd(WfdCommand::Decode(args)) => wfd_decode(&cli, args),
+        Command::Cast(args) => cast(&cli, radio, args),
     }
+}
+
+/// Cast to a sink.
+///
+/// The sink connects to our RTSP control port, we negotiate with it, and
+/// then the media pipeline starts streaming to the RTP port it asked for.
+fn cast(cli: &Cli, mut radio: Radio, args: &CastArgs) -> Result<()> {
+    let server = rtsp::Server::bind(args.port)
+        .map_err(|e| anyhow::anyhow!("binding port {} failed: {e}", args.port))?;
+    println!("waiting for a sink on port {} for up to {}s", server.port(), args.wait);
+
+    // The sink has to be discoverable before it can connect, so advertise.
+    let ie = wfd::source_ie(rtsp::DEFAULT_CONTROL_PORT, 200);
+    let _ = radio.set_wfd_ie(&ie);
+
+    let mut log = |line: &str| {
+        if cli.json {
+            println!("{}", serde_json::json!({ "event": line }));
+        } else {
+            println!("{line}");
+        }
+    };
+
+    let session = server.handle_once(&mut log)?;
+    log(&format!("handshake reached {:?}", session.stage));
+    if let Some(caps) = &session.capabilities {
+        log(&format!("sink capabilities: {caps:?}"));
+    }
+    let Some(rtp_port) = session.rtp_port else {
+        anyhow::bail!("the sink did not give us an RTP port, so there is nowhere to stream to");
+    };
+    log(&format!(
+        "streaming to {}:{} for {}s",
+        session.peer.ip(),
+        rtp_port,
+        args.seconds
+    ));
+
+    let profile = media::Profile {
+        width: args.width,
+        height: args.height,
+        framerate: args.framerate,
+        bitrate_bps: args.bitrate * 1000,
+        encoder: media::Encoder::Auto,
+        audio: args.audio,
+        audio_device: args.audio_device.clone(),
+    };
+    let sink = media::Sink::Udp {
+        host: session.peer.ip().to_string(),
+        port: rtp_port,
+    };
+    let built = media::build(&profile, &sink)?;
+
+    let bus = built.pipeline.bus().expect("the pipeline has a bus");
+    built.pipeline.set_state(gstreamer::State::Playing)?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(args.seconds as u64);
+    while std::time::Instant::now() < deadline {
+        if let Some(message) = bus.timed_pop(gstreamer::ClockTime::from_mseconds(200)) {
+            if let gstreamer::MessageView::Error(err) = message.view() {
+                built.pipeline.set_state(gstreamer::State::Null).ok();
+                anyhow::bail!(
+                    "pipeline error: {}\n{}",
+                    err.error(),
+                    err.debug().unwrap_or_default()
+                );
+            }
+        }
+    }
+    built.pipeline.set_state(gstreamer::State::Null).ok();
+    println!("stream finished");
+    Ok(())
 }
 
 /// Decode a WFD information element, under both candidate bit layouts.
@@ -437,9 +544,9 @@ fn rtsp_serve(cli: &Cli, args: &RtspServeArgs) -> Result<()> {
             return Ok(());
         }
         match server.handle_once(&mut log) {
-            Ok((stage, capabilities)) => {
-                log(&format!("handshake reached {stage:?}"));
-                if let Some(caps) = capabilities {
+            Ok(session) => {
+                log(&format!("handshake reached {:?}", session.stage));
+                if let Some(caps) = &session.capabilities {
                     log(&format!("sink capabilities: {caps:?}"));
                 }
                 return Ok(());

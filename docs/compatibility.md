@@ -20,7 +20,7 @@
 
 | Device | Role | Status | Notes |
 | --- | --- | --- | --- |
-| AltoBeam-based Android TV (`android_b313`) | Miracast sink | **Unreachable** | In Miracast mode it leaves the LAN and is not heard on 2.4 GHz channels 1/6/11. Most likely a 5 GHz listener, which the reference adapter cannot see |
+| CVTE/Hisilicon Android TV `Hi3751V350` (`android_b313`) | Miracast sink | **Not usable as a sink** | Speaks standard `org.wfa.wfd1.0` (Hisilicon's own AOSP-derived sink, `libhiwfd.so`), but **advertises no WFD or P2P element at all**, so no source can find it. Its ATBM driver reports `channel not change` and its application reports `no cfg saved`. Evidence: [`spike/18-sink-analysis.md`](../spike/18-sink-analysis.md) |
 | QCA9565 / AR9565 | Wi-Fi source | **Known constraint** | 2.4 GHz only; single radio; `#channels <= 1` |
 
 ## The hardware requirement this implies

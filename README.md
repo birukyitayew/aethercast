@@ -39,6 +39,7 @@ GNOME Network Displays proved that Linux screen casting is possible, but it is s
 - `aethercastd`, the session daemon: radio health, the global WFD information element, and Wi-Fi Direct discovery — [`crates/aethercastd/`](crates/aethercastd/)
 - The WFD RTSP handshake, M1 through M7, with the sink's capabilities parsed — testable without hardware against a mock sink
 - A media pipeline that conforms to the Wi-Fi Display specification — video PID `0x1011`, audio PID `0x1100`, RTP payload type 33, seven TS packets per datagram, PCR within 100 ms — checked by [`spike/04-media-conformance.sh`](spike/04-media-conformance.sh)
+- **An end-to-end cast**: a source that screens, encodes, muxes and streams to a sink over RTP, with the stream validated by ffprobe — [`spike/19-end-to-end.sh`](spike/19-end-to-end.sh)
 
 ```console
 $ cargo run -p aethercastd -- doctor
@@ -52,7 +53,7 @@ wfd element      : armed
   device type     : source  session available: true  TDLS preferred: false
 ```
 
-Not yet implemented: P2P group formation, and the GUI.
+Not yet implemented: P2P group formation to a real sink, and the GUI.
 
 ## Documentation
 
