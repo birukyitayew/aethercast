@@ -51,6 +51,30 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-20 — Phase 0 spike: the radio-work wedge
+
+**Goal:** answer one question with evidence — does the AltoBeam TV respond to Wi-Fi Display probes? That question turned out to be downstream of a much bigger finding.
+
+**What we found**
+
+1. **GNOME Network Displays' empty sink list is not an application bug.** `wpa_supplicant`'s radio-work queue was wedged: one `p2p-scan` work item stuck at `started=1` for 12,737 seconds (3h31m), with 45 NetworkManager scans queued behind it and growing by one every 5 minutes. Every P2P find was rejected instantly (`P2P: Reject scan trigger since one is already pending`) and even a plain `wpa_cli scan` returned `FAIL-BUSY`. There was not a single `P2P: Scan results received` event in the whole session, and no kernel-side error: the driver accepted the request and never completed it.
+2. **Recovery exists and needs no root.** `wpa_cli -i wlan0 FLUSH` aborted the stuck scan: queue 47 → 0, plain scan `FAIL-BUSY` → `OK`, `p2p_find` `FAIL` → `OK` and completing without re-wedging. The station is reactivated automatically afterwards (~10 s).
+3. **We can set a global WFD IE without root, and NetworkManager cannot.** `wpa_cli WFD_SUBELEM_SET all <hex>` stores a WFD-IE body in wpa_supplicant; `wifi_display_update_wfd_ie()` propagates it into `p2p_set_wfd_ie_probe_req()`, and `p2p_scan_ie()` adds it to every P2P find scan's probe requests (`params->p2p_probe = 1`). **Our discovery probes now carry a real WFD IE** — something the existing app can never do, because NM exposes no API for it. The subelement ID space is 0–11 (`MAX_WFD_SUBELEMS`).
+4. **The TV has still not been seen.** Discovery now runs cleanly, but zero peers, zero `P2P_EVENT_DEVICE_FOUND`. The remaining suspects are the TV not being in Miracast mode, and the single-radio channel constraint.
+
+**Delivered**
+- `spike/01-radio-work-wedge-report.md` — full technical report with source-level references
+- `spike/02-recover-radio-work.sh` — automated wedge recovery
+- `spike/03-discovery-window.sh` — supervised discovery window
+- `spike/evidence/radio-work-wedged.txt` — the captured queue
+
+**Next**
+- Put the TV in Miracast mode and re-run the discovery window with the WFD IE armed.
+- If the sink still does not appear, capture the air in monitor mode to see whether it answers a WFD-bearing probe at all.
+- Design implication for v1: the "no sinks" screen must diagnose the radio, not just list devices.
+
+---
+
 ## 2026-10-20 — Research phase complete
 
 **What landed**
