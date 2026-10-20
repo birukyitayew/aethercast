@@ -1,3 +1,5 @@
+> **Naming note.** This note was written on 2026-10-20, when the project was still the codename "AetherCast". The project was renamed to **Castrel** the same day because the codename collided with prior art in this exact niche — see [ADR-0004](../adr/0004-codename-not-brand.md). "AetherCast" below refers to the codename.
+
 # 05 — Product and Architecture
 
 **Status:** Research complete, pre-implementation. **Date:** 2026-10-20.

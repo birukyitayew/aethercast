@@ -1,0 +1,35 @@
+name: Developer Certificate of Origin
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Check every commit carries a Signed-off-by line
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          head='${{ github.event.pull_request.head.sha }}'
+          if [ "$base" = "$head" ]; then
+            echo "No new commits to check."
+            exit 0
+          fi
+          git fetch --no-tags --depth=50 origin "$base" || true
+          failed=0
+          for commit in $(git rev-list --no-merges "$base..$head"); do
+            if ! git log -1 --format='%B' "$commit" | grep -qE '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "::error::Commit $commit is missing a valid 'Signed-off-by:' line. Use 'git commit -s'."
+              failed=1
+            fi
+          done
+          exit $failed

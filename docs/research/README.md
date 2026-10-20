@@ -25,7 +25,7 @@ Five parallel research tracks, completed 2026-10-20 by the research orchestra. R
 3. **NetworkManager cannot express what P2P needs.** No GO intent, no operating frequency, no peer channel, `join` hard-coded false. A narrow helper that can reach wpa_supplicant is required. — [02](02-linux-wifi-p2p.md) §6
 4. **Software encode is a 720p30-only path, and only with x264.** Measured on this box: OpenH264 0.32–0.81× realtime at 720p30, x264 2.64×. 1080p30 requires hardware. `vah264enc` is missing from stock GStreamer 1.28.3 here. — [03](03-media-pipeline.md) §4
 5. **GND's negotiation core has four high-severity defects** — no global WFD IE during discovery, the second RTP port misread as RTCP, resolution selection compiled out behind `#if 0` (always 1080p30), and a 512 kbit/s bitrate clamp. Forking it inherits them. — [01](01-miracast-wfd.md) §5
-6. **The name collides.** `ubports/aethercast` (archived 2022) is the same name, same domain, same API concept, and Canonical ran an "Aethercast" Miracast project in 2015. Treat the current name as a codename. — [05](05-product-architecture.md) §4.2
+6. **The codename collided.** "AetherCast" was the same name as `ubports/aethercast` (archived 2022) — same domain, same API concept — and Canonical ran an "Aethercast" Miracast project in 2015. The project was renamed to **Castrel** on 2026-10-20. — [05](05-product-architecture.md) §4.2, [ADR-0004](../adr/0004-codename-not-brand.md)
 
 ## What the research recommends
 
@@ -36,4 +36,4 @@ Five parallel research tracks, completed 2026-10-20 by the research orchestra. R
 - **Ship Flatpak first**, distro packages second.
 - **Gate on the radio.** Prove discovery and a first frame on the QCA9565/AltoBeam combination before investing in UI.
 
-Full verdicts live in each note's "Bottom line for AetherCast" section.
+Full verdicts live in each note's "Bottom line for Castrel" section.

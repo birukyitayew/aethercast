@@ -1,6 +1,6 @@
 # Documentation Index
 
-AetherCast is in the research phase. This directory is the single source of truth for what we know, what we decided, and what we still need to prove.
+Castrel is in the research phase. This directory is the single source of truth for what we know, what we decided, and what we still need to prove.
 
 ## Structure
 
@@ -28,12 +28,12 @@ Start with the [research index](research/README.md) for the six findings that de
 - [ADR-0001](adr/0001-research-first-and-v1-scope.md) — research first, Miracast source first (Accepted)
 - [ADR-0002](adr/0002-rust-control-gstreamer-media.md) — Rust control plane, GStreamer media plane (Proposed)
 - [ADR-0003](adr/0003-license-gpl3.md) — GPL-3.0-or-later, DCO, no CLA (Proposed)
-- [ADR-0004](adr/0004-codename-not-brand.md) — "AetherCast" is a codename, not a brand (Accepted)
+- [ADR-0004](adr/0004-codename-not-brand.md) — "Castrel" is a codename, not a brand (Accepted)
 
 ## Research standards
 
 - Every factual claim needs a source link or a reproducible local command.
 - Separate **verified**, **reported**, and **speculative** claims.
-- Include a "Bottom line for AetherCast" section with concrete recommendations.
+- Include a "Bottom line for Castrel" section with concrete recommendations.
 - Record open questions and risks, not just conclusions.
 - Prefer primary sources: specifications, source code, kernel/wpa_supplicant docs, and issue trackers.

@@ -1,8 +1,8 @@
 # ADR 0003: GPL-3.0-or-later, DCO, no CLA
 
-- **Status:** Proposed — recommended by research, awaiting maintainer sign-off
+- **Status:** Accepted (2026-10-20, maintainer sign-off after research synthesis)
 - **Date:** 2026-10-20
-- **Deciders:** Biruk Yitayew, AetherCast research team
+- **Deciders:** Biruk Yitayew, Castrel research team
 
 ## Context
 
@@ -17,7 +17,7 @@ The research established:
 
 ## Decision
 
-**AetherCast is licensed GPL-3.0-or-later.** Contributions are made under a **Developer Certificate of Origin**. We do **not** use a CLA.
+**Castrel is licensed GPL-3.0-or-later.** Contributions are made under a **Developer Certificate of Origin**. We do **not** use a CLA.
 
 Concretely:
 

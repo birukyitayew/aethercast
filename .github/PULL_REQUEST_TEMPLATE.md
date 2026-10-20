@@ -23,4 +23,5 @@ How did you test or verify this? Include commands, hardware, and results.
 ## Licensing
 
 - [ ] I have read `CONTRIBUTING.md`.
-- [ ] I understand that the project license is not final and that copied code from incompatible licenses is not acceptable.
+- [ ] I understand the project is GPL-3.0-or-later and that copied code from incompatible licenses is not acceptable.
+- [ ] Every commit carries a `Signed-off-by:` line (`git commit -s`).

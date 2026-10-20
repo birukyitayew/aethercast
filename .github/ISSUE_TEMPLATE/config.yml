@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: Research documentation
-    url: https://github.com/birukyitayew/aethercast/tree/main/docs/research
+    url: https://github.com/birukyitayew/castrel/tree/main/docs/research
     about: Read the protocol and platform research before opening a design issue.
   - name: Questions and design discussions
-    url: https://github.com/birukyitayew/aethercast/discussions
+    url: https://github.com/birukyitayew/castrel/discussions
     about: Ask questions, share hardware results, or discuss architecture ideas.

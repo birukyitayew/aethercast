@@ -1,6 +1,6 @@
-# Contributing to AetherCast
+# Contributing to Castrel
 
-AetherCast is in the research phase. The most valuable contributions right now are **evidence, protocol notes, hardware reports, and design critique** — not product code.
+Castrel is in the research phase. The most valuable contributions right now are **evidence, protocol notes, hardware reports, and design critique** — not product code.
 
 ## Before you start
 
@@ -48,7 +48,12 @@ fix: handle RTSP timeout during M4
 
 ## Licensing
 
-The project license is not final. We will document the decision in an ADR before accepting substantial code. Do not contribute code copied from projects with incompatible licenses. By contributing documentation, you agree that it can be published under the project's final license.
+Castrel is licensed **GPL-3.0-or-later** (see [ADR-0003](docs/adr/0003-license-gpl3.md)).
+
+- **Sign off every commit** with the Developer Certificate of Origin: use `git commit -s` or `git commit --signoff`. A CI check enforces it on pull requests.
+- We do **not** use a CLA. The DCO gives us the copyright and licensing grant we need, without the friction that stops contributions.
+- Do not contribute code copied from projects with incompatible licenses. GPL prior art may be **studied** for protocol understanding, but not copied into files we ship. `openairplay/airplay2-receiver` ships no LICENSE file at all and must never be copied under any circumstances.
+- We do not add code that circumvents HDCP, FairPlay, Widevine, or any other content protection.
 
 ## Code of conduct
 

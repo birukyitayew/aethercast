@@ -1,4 +1,4 @@
-# AetherCast Build Journal
+# Castrel Build Journal
 
 A running record of decisions, experiments, dead ends, and lessons. Newest entries at the top.
 
@@ -13,7 +13,7 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 - Research and architecture pack before product code.
 - Public GitHub repository.
 - Tech stack and license: decided after the research pack, not by preference.
-- Working name: **AetherCast** (provisional; trademark/name check pending).
+- Working name: **Castrel** (provisional; trademark/name check pending).
 
 **Environment**
 - Kali Linux 2026.2, XFCE, X11.
@@ -25,7 +25,7 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 **GitHub**
 - Authenticated `gh` as `birukyitayew`.
-- Public repository: [`birukyitayew/aethercast`](https://github.com/birukyitayew/aethercast).
+- Public repository: [`birukyitayew/castrel`](https://github.com/birukyitayew/castrel).
 
 **Work started**
 - Five parallel research tracks launched:
@@ -70,7 +70,12 @@ Five cited research notes, ~30,000 words, 393 URLs, 393+ line-level claims label
 3. NetworkManager cannot express GO intent, operating frequency, or peer channel — a narrow helper is required.
 4. Software encode is 720p30-only and only with x264. Measured here: OpenH264 0.32–0.81× realtime at 720p30, x264 2.64×. `vah264enc` is missing from stock GStreamer 1.28.3.
 5. GND's negotiation core has four high-severity defects (no global WFD IE in discovery, second RTP port misread as RTCP, resolution selection compiled out, 512 kbit/s clamp). Forking inherits them.
-6. "AetherCast" collides with `ubports/aethercast` and Canonical's 2015 Ubuntu Miracast project. Codename only; rename before any brand.
+6. The codename "AetherCast" collides with `ubports/aethercast` and Canonical's 2015 Ubuntu Miracast project. Codename only; rename before any brand.
+
+**Decisions taken (maintainer sign-off)**
+- **License:** GPL-3.0-or-later, DCO, no CLA (ADR-0003 → Accepted).
+- **Architecture:** Rust control plane + GStreamer media plane, daemon + versioned D-Bus + GTK4 + CLI (ADR-0002 → Accepted).
+- **Name:** the codename "AetherCast" is retired; the project is **Castrel**. Repository renamed to `birukyitayew/castrel`; the D-Bus namespace, Flathub ID, and package names follow the same change.
 
 **Decisions recorded**
 - ADR-0002 (Proposed): Rust control plane, GStreamer media plane, daemon + versioned D-Bus + GTK4 + CLI.
