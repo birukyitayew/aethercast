@@ -367,6 +367,32 @@ impl Radio {
         Ok(())
     }
 
+    /// Remove leftover Wi-Fi Direct group interfaces.
+    ///
+    /// Tearing a group down can leave the kernel network interface behind
+    /// on this driver, and the *next* group creation then fails with
+    /// "Name not unique on network". Deleting the netdev needs
+    /// CAP_NET_ADMIN, so this is best effort and the caller has to report
+    /// what it could not do.
+    pub fn remove_stale_group_interfaces(&self) -> RadioResult<Vec<String>> {
+        let mut removed = Vec::new();
+        for interface in self.p2p_group_interfaces() {
+            let deleted = std::process::Command::new("iw")
+                .arg("dev")
+                .arg(&interface)
+                .arg("del")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            if let Ok(status) = deleted {
+                if status.success() {
+                    removed.push(interface);
+                }
+            }
+        }
+        Ok(removed)
+    }
+
     /// Tear the group down.
     pub fn p2p_group_remove(&mut self) -> RadioResult<()> {
         self.sup.request("P2P_GROUP_REMOVE *")?;

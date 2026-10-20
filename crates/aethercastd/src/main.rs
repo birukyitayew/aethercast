@@ -302,6 +302,18 @@ fn cast(cli: &Cli, mut radio: Radio, args: &CastArgs) -> Result<()> {
     // interface, so the group has to exist before the server is bound.
     let mut group_address = None;
     if args.group {
+        // A group left over from an earlier session can make the next one
+        // fail with "Name not unique on network", so clear it first.
+        let _ = radio.p2p_group_remove();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let removed = radio.remove_stale_group_interfaces()?;
+        if !removed.is_empty() {
+            println!("removed stale group interface(s): {}", removed.join(", "));
+        } else if !radio.p2p_group_interfaces().is_empty() {
+            let stale = radio.p2p_group_interfaces().join(", ");
+            println!("note: {stale} is left over and needs 'sudo iw dev {stale} del'");
+        }
+
         let before = radio.p2p_group_interfaces();
         radio.p2p_group_add(args.freq)?;
         println!("group requested (freq: {:?})", args.freq);
@@ -878,6 +890,18 @@ fn arm(cli: &Cli, mut radio: Radio, args: &ArmArgs) -> Result<()> {
 
 fn recover(cli: &Cli, mut radio: Radio) -> Result<()> {
     let recovery = radio.recover()?;
+    let stale = radio.remove_stale_group_interfaces()?;
+    if !stale.is_empty() {
+        println!("removed stale group interface(s): {}", stale.join(", "));
+    } else {
+        let leftover = radio.p2p_group_interfaces();
+        if !leftover.is_empty() {
+            let names = leftover.join(", ");
+            println!(
+                "a stale group interface is left over and needs removing with root:\n  sudo iw dev {names} del"
+            );
+        }
+    }
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&recovery)?);
     } else {

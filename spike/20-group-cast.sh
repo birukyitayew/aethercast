@@ -39,6 +39,13 @@ if [ ! -x ./target/release/aethercastd ]; then
 	cargo build --release || exit 1
 fi
 
+# Clean up the address we add to the group interface.
+cleanup() {
+	ip addr del "$GROUP_IP/$GROUP_CIDR" dev "$IFACE" 2>/dev/null
+	wpa_cli -i wlan0 p2p_group_remove '*' >/dev/null 2>&1
+}
+trap cleanup EXIT
+
 echo "== starting the source, which forms the group =="
 timeout $((SECS + 60)) ./target/release/aethercastd cast --group --port 7236 --seconds "$SECS" \
 	> "$OUT/group-source.log" 2>&1 &
