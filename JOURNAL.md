@@ -51,6 +51,58 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-20 — The sink was transmitting all along, and it is not a standard sink
+
+The corrected monitor sweep (channels 1/6/11, with a positive control)
+finally produced a usable capture, and it changed the picture completely.
+
+**On channel 1, the sink sent six probe requests** from
+`dc:29:19:7f:46:5e` — its own MAC. Our earlier captures missed them
+because the channel 6 and 11 captures were broken (zero frames, not even
+the known `Nebyu` network), and because the vendor service tears its
+Wi-Fi Direct listen down whenever its Wi-Fi association changes.
+
+**And its probe requests carry no information elements that any standard
+source would recognise:**
+
+```
+dc:29:19:7f:46:5e subtype=4 ie=0  len=0  data=              (SSID, wildcard)
+dc:29:19:7f:46:5e subtype=4 ie=1  len=8  data=82848b960c121824  (supported rates)
+dc:29:19:7f:46:5e subtype=4 ie=50 len=4  data=3048606c         (extended rates)
+dc:29:19:7f:46:5e subtype=4 ie=45 len=26 data=721102ff...     (HT capabilities)
+```
+
+**No P2P information element. No WFD information element. No vendor
+information element at all.** A sink that advertises nothing cannot be
+found by a standard Miracast source — not by Windows, not by Android, not
+by GNOME Network Displays, not by us.
+
+This is a **vendor implementation** (`com.hisilicon.miracast`, on a
+CVTE/Hisilicon Android TV with an ATBM 2.4 GHz-only chip), and it does
+not follow the standard advertising path.
+
+**What we know for certain now**
+
+- The radio is healthy; the searches run to completion; our WFD element
+  is correct under every reading of the specification.
+- The sink is alive, transmitting, and on the same 2.4 GHz band.
+- It does not advertise itself in a way any standard source can use.
+- While its screen-share screen is up, it is **off the LAN entirely** —
+  so it is not an MS-MICE (infrastructure) sink either.
+- When the screen-share screen is closed it rejoins the LAN and its
+  service stops; the two states are exclusive.
+
+**The next step is to read the vendor's own code.** The application is
+`/system/app/Miracast/Miracast.apk` on the device. Reading it answers
+the only question left: does it use a vendor OUI for its WFD element,
+what exactly does it expect from a source, and is it a P2P sink at all?
+
+If it turns out to be a proprietary variant, that is not a dead end: it
+becomes a documented compatibility entry, and a candidate **vendor
+extension provider** — something GNOME Network Displays can never be.
+
+---
+
 ## 2026-10-20 — The sink is an Android box, and AOSP's WFD sink is talkative
 
 The TV's screen says **"waiting for connection"** and names the device

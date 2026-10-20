@@ -14,6 +14,7 @@ For each device it reports:
   * the WFD information element, byte for byte.
 
 Usage: extract-wfd.py <capture.pcap> [more.pcap ...]
+       extract-wfd.py --raw <capture.pcap>   dump every information element
 """
 
 import struct
@@ -159,10 +160,35 @@ def describe_wfd(payload):
     return lines
 
 
+def dump_raw(paths):
+    """Print every information element of every management frame."""
+    for path in paths:
+        print(f"== {path}")
+        for frame in read_pcap(path):
+            if len(frame) < 24:
+                continue
+            frame_control = struct.unpack("<H", frame[0:2])[0]
+            if (frame_control >> 2) & 0x3 != 0:
+                continue
+            subtype = (frame_control >> 4) & 0xF
+            source = frame[10:16]
+            body = frame[36:] if subtype in (BEACON, PROBE_RESPONSE) else frame[24:]
+            for element_id, payload in parse_ies(body):
+                if element_id == 221 and len(payload) >= 4:
+                    oui = payload[:3].hex(":")
+                    oui_type = payload[3]
+                    print(f"  {mac(source)} subtype={subtype} vendor IE oui={oui} type=0x{oui_type:02x} data={payload[4:].hex()}")
+                else:
+                    print(f"  {mac(source)} subtype={subtype} ie={element_id} len={len(payload)} data={payload.hex()}")
+    return 0
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
         return 1
+    if sys.argv[1] == "--raw":
+        return dump_raw(sys.argv[2:])
     devices = defaultdict(
         lambda: {
             "frames": 0,
