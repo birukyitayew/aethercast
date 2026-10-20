@@ -39,7 +39,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-ugly ffmpeg
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly ffmpeg
 
       - name: Build
         run: cargo build --release
@@ -60,4 +60,4 @@ jobs:
 
       - name: The media conformance checks
         run: |
-          NO_AUDIO=1 ./spike/04-media-conformance.sh
+          NO_AUDIO=1 TEST_PATTERN=1 ./spike/04-media-conformance.sh

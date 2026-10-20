@@ -40,9 +40,20 @@ fi
 export PULSE_SERVER="unix:${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native"
 AUDIO_DEVICE="${AUDIO_DEVICE:-alsa_output.pci-0000_00_1f.3.analog-stereo.monitor}"
 
+# A build server has neither a display nor a sound card, so the test can be
+# run with a generated pattern and without audio.
+TEST_ARGS=()
+if [ "${TEST_PATTERN:-0}" = "1" ]; then
+	TEST_ARGS+=(--test-pattern)
+else
+	TEST_ARGS+=(--audio --audio-device "$AUDIO_DEVICE")
+fi
+if [ "${NO_AUDIO:-0}" = "1" ]; then
+	TEST_ARGS=(--test-pattern)
+fi
+
 echo "== 1. MPEG-TS file =="
-"$BIN" media test --seconds 6 --out "$WORK/stream.ts" --audio \
-	--audio-device "$AUDIO_DEVICE" | sed 's/^/  /'
+"$BIN" media test --seconds 6 --out "$WORK/stream.ts" "${TEST_ARGS[@]}" | sed 's/^/  /'
 
 VIDEO_PID=$(ffprobe -v error -select_streams v:0 -show_entries stream=id -of csv=p=0 "$WORK/stream.ts" 2>/dev/null | head -1)
 AUDIO_PID=$(ffprobe -v error -select_streams a:0 -show_entries stream=id -of csv=p=0 "$WORK/stream.ts" 2>/dev/null | head -1)
@@ -50,9 +61,13 @@ VIDEO_CODEC=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_na
 AUDIO_CODEC=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$WORK/stream.ts" 2>/dev/null | head -1)
 
 check "video PID is 0x1011" "0x1011" "$VIDEO_PID"
-check "audio PID is 0x1100" "0x1100" "$AUDIO_PID"
+if [ "${NO_AUDIO:-0}" != "1" ]; then
+	check "audio PID is 0x1100" "0x1100" "$AUDIO_PID"
+fi
 check "video codec" "h264" "$VIDEO_CODEC"
-check "audio codec" "aac" "$AUDIO_CODEC"
+if [ "${NO_AUDIO:-0}" != "1" ]; then
+	check "audio codec" "aac" "$AUDIO_CODEC"
+fi
 
 echo
 echo "== 2. PCR cadence (the specification requires 100 ms or less) =="
