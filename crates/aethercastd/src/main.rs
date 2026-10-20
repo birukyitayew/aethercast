@@ -7,6 +7,7 @@
 mod discovery;
 mod media;
 mod radio;
+mod rtsp;
 mod supplicant;
 mod wfd;
 
@@ -61,6 +62,25 @@ enum Command {
     /// Inspect and exercise the media pipeline.
     #[command(subcommand)]
     Media(MediaCommand),
+    /// Run the WFD RTSP handshake against a sink.
+    #[command(subcommand)]
+    Rtsp(RtspCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum RtspCommand {
+    /// Listen for a sink and run the WFD handshake with it.
+    Serve(RtspServeArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct RtspServeArgs {
+    /// The control port to listen on.
+    #[arg(long, default_value_t = rtsp::DEFAULT_CONTROL_PORT)]
+    port: u16,
+    /// Stop after this many seconds.
+    #[arg(long, default_value_t = 60)]
+    seconds: u32,
 }
 
 #[derive(Subcommand, Debug)]
@@ -153,6 +173,52 @@ fn main() -> Result<()> {
         Command::Discover(args) => discover(&cli, radio, args),
         Command::Media(MediaCommand::Probe) => media_probe(&cli),
         Command::Media(MediaCommand::Test(args)) => media_test(&cli, args),
+        Command::Rtsp(RtspCommand::Serve(args)) => rtsp_serve(&cli, args),
+    }
+}
+
+/// Run the WFD RTSP handshake against the first sink that connects.
+fn rtsp_serve(cli: &Cli, args: &RtspServeArgs) -> Result<()> {
+    let server = rtsp::Server::bind(args.port)
+        .map_err(|e| anyhow::anyhow!("binding port {} failed: {e}", args.port))?;
+    println!("listening for a sink on port {}", server.port());
+
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(args.seconds as u64);
+    let mut log = |line: &str| {
+        if cli.json {
+            println!("{}", serde_json::json!({ "event": line }));
+        } else {
+            println!("{line}");
+        }
+    };
+
+    // The accept has no timeout of its own, so the deadline is checked
+    // between connections.
+    server
+        .set_nonblocking(true)
+        .ok();
+    loop {
+        if std::time::Instant::now() >= deadline {
+            log("no sink connected before the deadline");
+            return Ok(());
+        }
+        match server.handle_once(&mut log) {
+            Ok((stage, capabilities)) => {
+                log(&format!("handshake reached {stage:?}"));
+                if let Some(caps) = capabilities {
+                    log(&format!("sink capabilities: {caps:?}"));
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::WouldBlock {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    continue;
+                }
+                return Err(e.into());
+            }
+        }
     }
 }
 
