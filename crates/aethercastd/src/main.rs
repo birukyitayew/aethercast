@@ -275,33 +275,61 @@ fn main() -> Result<()> {
     // GStreamer has to be initialised before any element is looked up.
     gstreamer::init().ok();
     let cli = Cli::parse();
-    let radio = Radio::open(&cli.iface).context("opening the wpa_supplicant control interface")?;
 
+    // The radio is opened only by the commands that need it. Serving a
+    // session and running the media pipeline need no wireless adapter at
+    // all, which is what makes them testable on a build server.
     match &cli.command {
-        Command::Doctor => doctor(&cli, radio),
-        Command::Arm(args) => arm(&cli, radio, args),
-        Command::Recover => recover(&cli, radio),
-        Command::Discover(args) => discover(&cli, radio, args),
+        Command::Doctor => doctor(&cli, open_radio(&cli)?),
+        Command::Arm(args) => arm(&cli, open_radio(&cli)?, args),
+        Command::Recover => recover(&cli, open_radio(&cli)?),
+        Command::Discover(args) => discover(&cli, open_radio(&cli)?, args),
         Command::Media(MediaCommand::Probe) => media_probe(&cli),
         Command::Media(MediaCommand::Test(args)) => media_test(&cli, args),
         Command::Rtsp(RtspCommand::Serve(args)) => rtsp_serve(&cli, args),
-        Command::P2p(P2pCommand::Group(args)) => p2p_group(&cli, radio, args),
-        Command::P2p(P2pCommand::Connect(args)) => p2p_connect(&cli, radio, args),
-        Command::P2p(P2pCommand::Listen(args)) => p2p_listen(&cli, radio, args),
+        Command::P2p(P2pCommand::Group(args)) => p2p_group(&cli, open_radio(&cli)?, args),
+        Command::P2p(P2pCommand::Connect(args)) => p2p_connect(&cli, open_radio(&cli)?, args),
+        Command::P2p(P2pCommand::Listen(args)) => p2p_listen(&cli, open_radio(&cli)?, args),
         Command::Wfd(WfdCommand::Decode(args)) => wfd_decode(&cli, args),
-        Command::Cast(args) => cast(&cli, radio, args),
+        Command::Cast(args) => cast(&cli, args),
     }
+}
+
+/// Open the wireless radio.
+fn open_radio(cli: &Cli) -> Result<Radio> {
+    Radio::open(&cli.iface).with_context(|| {
+        format!(
+            "opening the wpa_supplicant control interface for {}",
+            cli.iface
+        )
+    })
 }
 
 /// Cast to a sink.
 ///
 /// The sink connects to our RTSP control port, we negotiate with it, and
 /// then the media pipeline starts streaming to the RTP port it asked for.
-fn cast(cli: &Cli, mut radio: Radio, args: &CastArgs) -> Result<()> {
+fn cast(cli: &Cli, args: &CastArgs) -> Result<()> {
     // On a Wi-Fi Display session the sink reaches us on the group
     // interface, so the group has to exist before the server is bound.
+    // The radio is optional here: a sink that already found us does not
+    // need us to be advertising, and a build server has no adapter at all.
+    let mut radio = match Radio::open(&cli.iface) {
+        Ok(radio) => Some(radio),
+        Err(e) => {
+            if args.group {
+                return Err(e).context("forming a group needs the wireless adapter");
+            }
+            eprintln!("note: no wireless adapter ({e}), serving the session anyway");
+            None
+        }
+    };
+
     let mut group_address = None;
     if args.group {
+        let radio = radio
+            .as_mut()
+            .expect("the radio was opened for a group request");
         // A group left over from an earlier session can make the next one
         // fail with "Name not unique on network", so clear it first.
         let _ = radio.p2p_group_remove();
@@ -348,8 +376,10 @@ fn cast(cli: &Cli, mut radio: Radio, args: &CastArgs) -> Result<()> {
     );
 
     // The sink has to be discoverable before it can connect, so advertise.
-    let ie = wfd::source_ie(rtsp::DEFAULT_CONTROL_PORT, 200);
-    let _ = radio.set_wfd_ie(&ie);
+    if let Some(radio) = radio.as_mut() {
+        let ie = wfd::source_ie(rtsp::DEFAULT_CONTROL_PORT, 200);
+        let _ = radio.set_wfd_ie(&ie);
+    }
 
     let mut log = |line: &str| {
         if cli.json {
