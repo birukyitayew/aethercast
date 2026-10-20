@@ -51,6 +51,67 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-20 — Milestone 1: `aethercastd` exists
+
+**What we built**
+
+The first real AetherCast code: a Rust daemon with a CLI, 14 unit tests, and a clean clippy run. It is not a caster yet — it is the layer that decides whether a cast can start at all.
+
+| Module | What it does |
+| --- | --- |
+| `supplicant.rs` | Client for the `wpa_supplicant` control interface |
+| `wfd.rs` | WFD information element: build, parse, and decode device information |
+| `radio.rs` | Radio health, wedge detection and recovery, Wi-Fi Direct control |
+| `discovery.rs` | Peer model and event parsing |
+| `main.rs` | CLI: `doctor`, `arm`, `recover`, `discover` |
+
+**The control interface is not what the documentation suggests.** Four things cost us real time and are worth recording:
+
+1. It is a **datagram** socket (`SOCK_DGRAM`), not a stream. `UnixStream` fails with `Protocol wrong type for socket`.
+2. The client must **bind a local address** first. Without it the request is delivered but the reply is lost and the caller blocks forever — `wpa_ctrl_open()` does the same thing.
+3. Commands must be sent **without a trailing newline**. The control interface parses the rest of the line as arguments, and the stray newline makes `WFD_SUBELEM_SET` fail on the hex payload.
+4. Most commands reply `OK`/`FAIL`, but `STATUS`, `WFD_SUBELEM_GET`, `RADIO_WORK show` and `P2P_PEER` return a **raw document**. And there is no `P2P_PEERS` command: peers are walked with `P2P_PEER FIRST` then `P2P_PEER NEXT-<address>`.
+
+**Two protocol bugs our own tests caught**
+
+- The WFD device information field is a big-endian 16-bit value with **bits numbered from the LSB of the low byte**, not from the first octet. The first implementation had the two bytes swapped, which made GNOME Network Displays' own element decode as "session unavailable".
+- `P2P_EVENT_DEVICE_FOUND` carries **two** addresses: the bare address the frame came from, and `p2p_dev_addr`, the peer's Wi-Fi Direct device address. They are not the same value.
+
+**What it does on this machine, right now**
+
+```
+$ aethercastd doctor
+interface        : wlan0
+station          : Biruk (2c:b6:c2:ed:c7:d3)  [connected]
+channel          : 2412 MHz
+radio-work queue : 0 item(s)
+radio health     : ok
+wfd element      : armed
+  - id=0 body=00101c4400c8
+  device type     : source  session available: true  TDLS preferred: false
+
+$ aethercastd discover --duration 25
+no peers found in 25s
+  radio: healthy, the search ran to completion
+  hint: make sure the sink is in Miracast / Screen Share mode
+```
+
+The WFD element we advertise is AetherCast's own: source, session available, **TDLS preference cleared** — the bit GNOME Network Displays sets incorrectly.
+
+**Still missing, in order**
+
+1. The sink is still not discovered. The radio is healthy, the search completes, the probe requests carry a WFD IE. The remaining variable is the TV itself.
+2. P2P group formation (GO negotiation) — `P2P_GROUP_ADD`, invitation, the sink joining our group.
+3. The WFD RTSP server: M1 `OPTIONS`, M2 public device information, M3 session description, M4 accept, M5 establish.
+4. The media pipeline, which needs the GStreamer development headers.
+5. The GUI, last.
+
+**Next**
+- Group formation and the RTSP handshake, so a sink can be *asked* for its capabilities.
+- The media pipeline, once `gstreamer1.0-dev` and friends are installed.
+
+---
+
 ## 2026-10-20 — Phase 0 spike: the radio-work wedge
 
 **Goal:** answer one question with evidence — does the AltoBeam TV respond to Wi-Fi Display probes? That question turned out to be downstream of a much bigger finding.
