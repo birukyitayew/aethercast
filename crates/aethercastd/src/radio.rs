@@ -137,7 +137,8 @@ impl Radio {
 
     /// Set the global WFD information element.
     pub fn set_wfd_ie(&mut self, ie: &WfdIe) -> RadioResult<()> {
-        self.sup.request(&format!("WFD_SUBELEM_SET all {}", ie.to_hex()))?;
+        self.sup
+            .request(&format!("WFD_SUBELEM_SET all {}", ie.to_hex()))?;
         Ok(())
     }
 

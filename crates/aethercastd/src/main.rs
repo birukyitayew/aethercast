@@ -317,14 +317,15 @@ fn cast(cli: &Cli, mut radio: Radio, args: &CastArgs) -> Result<()> {
         let before = radio.p2p_group_interfaces();
         radio.p2p_group_add(args.freq)?;
         println!("group requested (freq: {:?})", args.freq);
-        let interface = radio.wait_for_group_interface(
-            &before,
-            std::time::Duration::from_secs(20),
-        )?;
+        let interface =
+            radio.wait_for_group_interface(&before, std::time::Duration::from_secs(20))?;
         match interface {
             Some((interface, address)) => {
                 println!("the group is up on {interface} ({address})");
-                println!("a sink must join the group and connect to {address}:{}", args.port);
+                println!(
+                    "a sink must join the group and connect to {address}:{}",
+                    args.port
+                );
                 group_address = Some(address);
             }
             None => {
@@ -340,7 +341,11 @@ fn cast(cli: &Cli, mut radio: Radio, args: &CastArgs) -> Result<()> {
         None => rtsp::Server::bind(args.port),
     }
     .map_err(|e| anyhow::anyhow!("binding port {} failed: {e}", args.port))?;
-    println!("waiting for a sink on port {} for up to {}s", server.port(), args.wait);
+    println!(
+        "waiting for a sink on port {} for up to {}s",
+        server.port(),
+        args.wait
+    );
 
     // The sink has to be discoverable before it can connect, so advertise.
     let ie = wfd::source_ie(rtsp::DEFAULT_CONTROL_PORT, 200);
@@ -358,6 +363,13 @@ fn cast(cli: &Cli, mut radio: Radio, args: &CastArgs) -> Result<()> {
     log(&format!("handshake reached {:?}", session.stage));
     if let Some(caps) = &session.capabilities {
         log(&format!("sink capabilities: {caps:?}"));
+    }
+    if let Some(caps) = &session.capabilities {
+        if caps.is_primary_sink() {
+            log("the sink is a primary sink: it wants a single MPEG-TS stream");
+        } else {
+            log("the sink is a secondary sink: it wants audio only");
+        }
     }
     let Some(rtp_port) = session.rtp_port else {
         anyhow::bail!("the sink did not give us an RTP port, so there is nowhere to stream to");
@@ -430,22 +442,28 @@ fn wfd_decode(cli: &Cli, args: &WfdDecodeArgs) -> Result<()> {
     };
     let layouts = wfd::decode_layouts(&field);
     if cli.json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "hex": hex,
-            "layouts": layouts.iter().map(|(layout, info)| serde_json::json!({
-                "layout": format!("{layout}"),
-                "device_type": format!("{}", info.device_type),
-                "session_available": info.session_available,
-                "prefer_tdls": info.prefer_tdls,
-                "wsd_available": info.wsd_available,
-                "hdcp2_supported": info.hdcp2_supported,
-                "raw": format!("0x{:04x}", info.raw),
-            })).collect::<Vec<_>>(),
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "hex": hex,
+                "layouts": layouts.iter().map(|(layout, info)| serde_json::json!({
+                    "layout": format!("{layout}"),
+                    "device_type": format!("{}", info.device_type),
+                    "session_available": info.session_available,
+                    "prefer_tdls": info.prefer_tdls,
+                    "wsd_available": info.wsd_available,
+                    "hdcp2_supported": info.hdcp2_supported,
+                    "raw": format!("0x{:04x}", info.to_raw()),
+                })).collect::<Vec<_>>(),
+            }))?
+        );
         return Ok(());
     }
     println!("element: {} ({} bytes)", hex, bytes.len());
-    println!("device information field: {}", field.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    println!(
+        "device information field: {}",
+        field.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    );
     for (layout, info) in layouts {
         println!("  {layout}");
         println!("    device type      : {}", info.device_type);
@@ -453,7 +471,7 @@ fn wfd_decode(cli: &Cli, args: &WfdDecodeArgs) -> Result<()> {
         println!("    TDLS preferred   : {}", info.prefer_tdls);
         println!("    WSD available    : {}", info.wsd_available);
         println!("    HDCP 2.x         : {}", info.hdcp2_supported);
-        println!("    raw              : 0x{:04x}", info.raw);
+        println!("    raw              : 0x{:04x}", info.to_raw());
     }
     Ok(())
 }
@@ -461,17 +479,26 @@ fn wfd_decode(cli: &Cli, args: &WfdDecodeArgs) -> Result<()> {
 /// Stay discoverable, the way a Miracast source has to, and wait for a sink
 /// to connect.
 fn p2p_listen(cli: &Cli, mut radio: Radio, args: &P2pListenArgs) -> Result<()> {
+    let say = |line: &str| {
+        if cli.json {
+            println!("{}", serde_json::json!({ "event": line }));
+        } else {
+            println!("{line}");
+        }
+    };
     // A sink that filters on the WFD information element will not answer
     // us without one.
     let ie = wfd::source_ie(rtsp::DEFAULT_CONTROL_PORT, 200);
     radio.set_wfd_ie(&ie)?;
-    println!("WFD element armed, staying discoverable for {}s", args.seconds);
+    say(&format!(
+        "WFD element armed, staying discoverable for {}s",
+        args.seconds
+    ));
 
     radio.p2p_listen()?;
-    println!("listening: a sink can now find us");
+    say("listening: a sink can now find us");
 
-    let deadline =
-        std::time::Instant::now() + std::time::Duration::from_secs(args.seconds as u64);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(args.seconds as u64);
     let mut announced = Vec::new();
     while std::time::Instant::now() < deadline {
         // A group interface with an address means a sink has joined.
@@ -486,7 +513,10 @@ fn p2p_listen(cli: &Cli, mut radio: Radio, args: &P2pListenArgs) -> Result<()> {
             }
         }
         // Report whatever the supplicant tells us.
-        if let Ok(Some(line)) = radio.supplicant().poll_event(std::time::Duration::from_millis(200)) {
+        if let Ok(Some(line)) = radio
+            .supplicant()
+            .poll_event(std::time::Duration::from_millis(200))
+        {
             if let Some(event) = p2p::Event::parse(&line) {
                 match event {
                     p2p::Event::DeviceFound(text) => {
@@ -500,23 +530,28 @@ fn p2p_listen(cli: &Cli, mut radio: Radio, args: &P2pListenArgs) -> Result<()> {
             }
         }
     }
-    println!("the listen window closed");
+    say("the listen window closed");
     Ok(())
 }
 
 /// Become the Group Owner and wait for a sink to join.
 fn p2p_group(cli: &Cli, mut radio: Radio, args: &P2pGroupArgs) -> Result<()> {
+    let say = |line: &str| {
+        if cli.json {
+            println!("{}", serde_json::json!({ "event": line }));
+        } else {
+            println!("{line}");
+        }
+    };
     // The list has to be taken *before* the group is created, otherwise
     // the new interface is already in it.
     let before = radio.p2p_group_interfaces();
     radio.p2p_group_add(args.freq)?;
-    println!("group requested (freq: {:?})", args.freq);
+    say(&format!("group requested (freq: {:?})", args.freq));
     // The group interface is the reliable signal: the group-start event
     // goes to the supplicant's log, not to the control socket.
-    let interface = radio.wait_for_group_interface(
-        &before,
-        std::time::Duration::from_secs(args.wait as u64),
-    )?;
+    let interface = radio
+        .wait_for_group_interface(&before, std::time::Duration::from_secs(args.wait as u64))?;
     let group = radio.wait_for_group(std::time::Duration::from_secs(3))?;
     match (interface, group) {
         (Some((interface, address)), _) => {
@@ -531,10 +566,7 @@ fn p2p_group(cli: &Cli, mut radio: Radio, args: &P2pGroupArgs) -> Result<()> {
         (None, None) => {
             println!("no group formed within {}s", args.wait);
             let work = radio.radio_work()?;
-            println!(
-                "  radio-work queue: {} item(s)",
-                work.len()
-            );
+            println!("  radio-work queue: {} item(s)", work.len());
             for item in work.iter().take(4) {
                 println!(
                     "    - {} started={} age={:.0}s",
@@ -550,24 +582,34 @@ fn p2p_group(cli: &Cli, mut radio: Radio, args: &P2pGroupArgs) -> Result<()> {
 
 /// Invite a peer into a group we own.
 fn p2p_connect(cli: &Cli, mut radio: Radio, args: &P2pConnectArgs) -> Result<()> {
-    println!("provisioning {}", args.peer);
+    let say = |line: &str| {
+        if cli.json {
+            println!("{}", serde_json::json!({ "event": line }));
+        } else {
+            println!("{line}");
+        }
+    };
+    say(&format!("provisioning {}", args.peer));
     match radio.p2p_prov_disc(&args.peer) {
-        Ok(text) => println!("  {text}"),
-        Err(e) => println!("  provisioning discovery failed: {e}"),
+        Ok(text) => say(&format!("  {text}")),
+        Err(e) => say(&format!("  provisioning discovery failed: {e}")),
     }
     radio.p2p_connect(&args.peer)?;
-    println!("group requested for {}", args.peer);
+    say(&format!("group requested for {}", args.peer));
     let group = radio.wait_for_group(std::time::Duration::from_secs(args.wait as u64))?;
     match group {
         Some(group) => {
             println!("group started on {}", group.interface);
             if let Ok(members) = radio.p2p_peers() {
                 for member in members {
-                    println!("  member: {member}");
+                    say(&format!("  member: {member}"));
+                    if let Ok(details) = radio.p2p_group_member(&member) {
+                        say(&format!("    {details}"));
+                    }
                 }
             }
         }
-        None => println!("no group formed within {}s", args.wait),
+        None => say(&format!("no group formed within {}s", args.wait)),
     }
     Ok(())
 }
@@ -578,8 +620,7 @@ fn rtsp_serve(cli: &Cli, args: &RtspServeArgs) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("binding port {} failed: {e}", args.port))?;
     println!("listening for a sink on port {}", server.port());
 
-    let deadline = std::time::Instant::now()
-        + std::time::Duration::from_secs(args.seconds as u64);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(args.seconds as u64);
     let mut log = |line: &str| {
         if cli.json {
             println!("{}", serde_json::json!({ "event": line }));
@@ -590,9 +631,7 @@ fn rtsp_serve(cli: &Cli, args: &RtspServeArgs) -> Result<()> {
 
     // The accept has no timeout of its own, so the deadline is checked
     // between connections.
-    server
-        .set_nonblocking(true)
-        .ok();
+    server.set_nonblocking(true).ok();
     loop {
         if std::time::Instant::now() >= deadline {
             log("no sink connected before the deadline");
@@ -672,11 +711,15 @@ fn media_probe(cli: &Cli) -> Result<()> {
     );
     println!(
         "wfd pids            : pmt=0x{:04x} pcr=0x{:04x} video=0x{:04x} audio=0x{:04x}",
-        media::PID_PMT, media::PID_PCR, media::PID_VIDEO, media::PID_AUDIO
+        media::PID_PMT,
+        media::PID_PCR,
+        media::PID_VIDEO,
+        media::PID_AUDIO
     );
     println!(
         "rtp                 : payload type {}, mtu {}",
-        media::RTP_PAYLOAD_TYPE, media::RTP_MTU
+        media::RTP_PAYLOAD_TYPE,
+        media::RTP_MTU
     );
     Ok(())
 }
@@ -787,7 +830,11 @@ fn doctor(cli: &Cli, mut radio: Radio) -> Result<()> {
             .as_deref()
             .map(|b| format!(" ({b})"))
             .unwrap_or_default(),
-        if status.connected { "  [connected]" } else { "  [not connected]" }
+        if status.connected {
+            "  [connected]"
+        } else {
+            "  [not connected]"
+        }
     );
     println!(
         "channel          : {}",
@@ -820,7 +867,7 @@ fn doctor(cli: &Cli, mut radio: Radio) -> Result<()> {
         } else {
             &adapter.phy
         },
-        adapter.band_names()
+        adapter.summary()
     );
     if let Some(limitation) = adapter.limitation() {
         println!("  limitation     : {limitation}");
@@ -832,7 +879,10 @@ fn doctor(cli: &Cli, mut radio: Radio) -> Result<()> {
                 println!(
                     "  - id={} body={}",
                     sub.id,
-                    sub.body.iter().map(|b| format!("{b:02x}")).collect::<String>()
+                    sub.body
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>()
                 );
             }
             if let Some(info) = ie.device_info() {
@@ -957,9 +1007,7 @@ fn discover(cli: &Cli, mut radio: Radio, args: &DiscoverArgs) -> Result<()> {
         match radio.supplicant().poll_event(Duration::from_millis(500)) {
             Ok(Some(line)) => {
                 if let Some(peer) = Peer::parse_event(&line) {
-                    peers
-                        .entry(peer.p2p_device_address.clone())
-                        .or_insert(peer);
+                    peers.entry(peer.p2p_device_address.clone()).or_insert(peer);
                 }
             }
             Ok(None) => {}
@@ -1016,7 +1064,14 @@ fn discover(cli: &Cli, mut radio: Radio, args: &DiscoverArgs) -> Result<()> {
         match &peer.wfd_dev_info {
             Some(info) => {
                 println!("    wfd role    : {}", info.device.device_type);
-                println!("    session     : {}", if info.device.session_available { "available" } else { "unavailable" });
+                println!(
+                    "    session     : {}",
+                    if info.device.session_available {
+                        "available"
+                    } else {
+                        "unavailable"
+                    }
+                );
                 println!("    control port: {}", info.control_port);
                 println!("    max rate    : {} Mbit/s", info.max_throughput_mbps);
                 println!("    HDCP 2.x    : {}", info.device.hdcp2_supported);
@@ -1026,8 +1081,7 @@ fn discover(cli: &Cli, mut radio: Radio, args: &DiscoverArgs) -> Result<()> {
         if !peer.is_wfd() {
             println!("    note        : this peer is not a Wi-Fi Display device");
         }
-        {
-        }
+        {}
         if args.verbose {
             println!("    raw         : {}", peer.raw);
         }

@@ -174,12 +174,7 @@ fn temp_control_path() -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    std::env::temp_dir().join(format!(
-        "wpa_ctrl_{}_{}_{}",
-        std::process::id(),
-        nanos,
-        seq
-    ))
+    std::env::temp_dir().join(format!("wpa_ctrl_{}_{}_{}", std::process::id(), nanos, seq))
 }
 
 #[cfg(test)]
@@ -190,7 +185,9 @@ mod tests {
     fn reports_a_missing_socket() {
         match Supplicant::connect("definitely-not-an-interface") {
             Err(Error::SocketMissing(path)) => {
-                assert!(path.to_string_lossy().contains("definitely-not-an-interface"));
+                assert!(path
+                    .to_string_lossy()
+                    .contains("definitely-not-an-interface"));
             }
             Err(other) => panic!("unexpected error: {other}"),
             Ok(_) => panic!("connecting to a missing interface should fail"),

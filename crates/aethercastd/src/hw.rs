@@ -100,6 +100,35 @@ impl Adapter {
         self.bands.contains(&Band::Six)
     }
 
+    /// The frequency ranges the adapter supports, in MHz.
+    pub fn ranges(&self) -> String {
+        if self.bands.is_empty() {
+            return "unknown".to_string();
+        }
+        self.bands
+            .iter()
+            .map(|band| {
+                let (low, high) = band.range_mhz();
+                format!("{}-{} MHz", low, high)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// A one-line summary of what the adapter can do.
+    pub fn summary(&self) -> String {
+        format!(
+            "{}, 5 GHz: {}, 6 GHz: {}",
+            self.band_names(),
+            if self.supports_five_ghz() {
+                "yes"
+            } else {
+                "no"
+            },
+            if self.supports_six_ghz() { "yes" } else { "no" }
+        )
+    }
+
     /// The bands as a readable list.
     pub fn band_names(&self) -> String {
         if self.bands.is_empty() {
@@ -128,8 +157,9 @@ impl Adapter {
             return None;
         }
         Some(format!(
-            "this adapter is 2.4 GHz only ({}), so a sink that advertises on 5 GHz cannot be seen",
-            self.band_names()
+            "this adapter is {} only ({}), so a sink that advertises on 5 GHz cannot be seen",
+            self.band_names(),
+            self.ranges()
         ))
     }
 }

@@ -38,7 +38,7 @@ pub const WFD_PUBLIC: &str = "org.wfa.wfd1.0";
 pub const DEFAULT_CONTROL_PORT: u16 = 7236;
 
 /// A parsed RTSP request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Request {
     pub method: String,
     pub uri: String,
@@ -58,10 +58,7 @@ impl Request {
         let mut lines = head.lines();
         let request_line = lines.next().ok_or(ParseError::Empty)?;
         let mut parts = request_line.split_whitespace();
-        let method = parts
-            .next()
-            .ok_or(ParseError::Malformed)?
-            .to_string();
+        let method = parts.next().ok_or(ParseError::Malformed)?.to_string();
         let uri = parts.next().ok_or(ParseError::Malformed)?.to_string();
         let version = parts.next().unwrap_or("RTSP/1.0").to_string();
 
@@ -127,7 +124,6 @@ pub struct Response {
     pub status: u16,
     pub reason: String,
     pub headers: Vec<(String, String)>,
-    pub body: String,
 }
 
 impl Response {
@@ -137,7 +133,6 @@ impl Response {
             status: 200,
             reason: "OK".into(),
             headers: Vec::new(),
-            body: String::new(),
         }
     }
 
@@ -147,7 +142,6 @@ impl Response {
             status,
             reason: reason.into(),
             headers: Vec::new(),
-            body: String::new(),
         }
     }
 
@@ -157,23 +151,13 @@ impl Response {
         self
     }
 
-    /// Set the body.
-    pub fn body(mut self, body: &str) -> Self {
-        self.body = body.to_string();
-        self
-    }
-
     /// Render the response.
     pub fn to_wire(&self) -> String {
         let mut out = format!("RTSP/1.0 {} {}\r\n", self.status, self.reason);
         for (key, value) in &self.headers {
             out.push_str(&format!("{key}: {value}\r\n"));
         }
-        if !self.body.is_empty() {
-            out.push_str(&format!("Content-Length: {}\r\n", self.body.len()));
-        }
         out.push_str("\r\n");
-        out.push_str(&self.body);
         out
     }
 }
@@ -202,13 +186,11 @@ impl SinkCapabilities {
     /// Parse the body of an M3 response.
     pub fn parse(body: &str) -> Self {
         let mut caps = SinkCapabilities::default();
-        for (key, value) in body
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim();
-                line.split_once('=')
-                    .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
-            })
+        for (key, value) in Request::parse(&format!("GET_PARAMETER x RTSP/1.0\r\n\r\n{body}"))
+            .unwrap_or_default()
+            .body_pairs()
+            .into_iter()
+            .map(|(key, value)| (key.to_ascii_lowercase(), value))
         {
             match key.as_str() {
                 "wfd_client_rtp_ports" => {
@@ -258,7 +240,7 @@ pub struct Session {
 }
 
 /// What the handshake reached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage {
     /// Waiting for the sink to connect.
     Connected,
@@ -358,7 +340,13 @@ impl Server {
         );
         write_line(&mut stream, &m3)?;
         log("-> M3 GET_PARAMETER (ports, formats, codecs, UIBC, protection)");
-        let reply = read_message(&mut stream)?;
+        let reply = match read_message(&mut stream) {
+            Ok(reply) => reply,
+            Err(e) => {
+                log(&format!("no M3 from the sink: {e}"));
+                return Ok(self.session(peer, Stage::M1M2, None));
+            }
+        };
         log(&format!("<- {}", reply.lines().next().unwrap_or_default()));
         let capabilities = SinkCapabilities::parse(&reply);
         log(&format!(
@@ -527,7 +515,8 @@ mod tests {
 
     #[test]
     fn parses_an_options_request() {
-        let raw = "OPTIONS rtsp://192.168.1.2/wfd RTSP/1.0\r\nCSeq: 2\r\nRequire: org.wfa.wfd1.0\r\n\r\n";
+        let raw =
+            "OPTIONS rtsp://192.168.1.2/wfd RTSP/1.0\r\nCSeq: 2\r\nRequire: org.wfa.wfd1.0\r\n\r\n";
         let request = Request::parse(raw).unwrap();
         assert_eq!(request.method, "OPTIONS");
         assert_eq!(request.uri, "rtsp://192.168.1.2/wfd");
@@ -553,10 +542,7 @@ mod tests {
         assert_eq!(caps.rtp_port0, Some(50000));
         assert_eq!(caps.rtp_port1, Some(0));
         assert!(caps.is_primary_sink());
-        assert_eq!(
-            caps.video_formats.as_deref(),
-            Some("32,1280x720p30-1")
-        );
+        assert_eq!(caps.video_formats.as_deref(), Some("32,1280x720p30-1"));
     }
 
     #[test]

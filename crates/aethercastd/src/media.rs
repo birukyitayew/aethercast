@@ -18,9 +18,9 @@
 //! cannot keep up, frames are dropped instead of accumulating latency. A
 //! non-leaky queue is one of the defects found in GNOME Network Displays.
 
+use gstreamer as gst;
 use gstreamer::gobject::GObjectExtManualGst;
 use gstreamer::prelude::*;
-use gstreamer as gst;
 
 /// Errors from building or running the pipeline.
 #[derive(Debug, thiserror::Error)]
@@ -263,7 +263,16 @@ pub fn build(profile: &Profile, sink: &Sink) -> Result<Pipeline> {
     // on the first video PID rather than on the 0x1000 the specification
     // asks for. That is a known gap, tracked in the project issue tracker.
 
-    for element in [&capture, &scale, &size, &convert, &queue, &encoder_el, &parse, &mux] {
+    for element in [
+        &capture,
+        &scale,
+        &size,
+        &convert,
+        &queue,
+        &encoder_el,
+        &parse,
+        &mux,
+    ] {
         pipeline.add(element)?;
     }
     if let Some((rate, cadence)) = &rate {

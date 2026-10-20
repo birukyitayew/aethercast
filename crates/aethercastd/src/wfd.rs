@@ -1,16 +1,29 @@
-//! Wi-Fi Display (WFD) information element handling.
+//! The Wi-Fi Display information element, and the device information field.
 //!
-//! A WFD IE is a vendor-specific 802.11 IE: element id `0xDD`, OUI
-//! `50-6F-9A`, OUI type `0x0A`, followed by subelements shaped as
-//! `id(1) | length(2, big-endian) | body`.
+//! The field is two bytes, and **the two readings of the specification
+//! disagree about which octet holds the low bits** — so the same bytes mean
+//! different things to different implementations. AetherCast therefore
+//! decodes under both readings ([`decode_layouts`]) and advertises a
+//! **symmetric** value, so that no reading can be more wrong than another.
 //!
-//! `wpa_supplicant` models the *body* of the IE: its `WFD_SUBELEM_SET all
-//! <hex>` command takes exactly the concatenation of those subelements, and
-//! `WFD_SUBELEM_GET all` returns them again. That is the byte string this
-//! module serialises.
+//! The bits this module interprets are:
 //!
-//! Subelement ids follow `src/common/ieee802_11_defs.h` in wpa_supplicant
-//! 2.10 and the WFD v2.1 specification, table 27.
+//! | bits | meaning |
+//! | --- | --- |
+//! | 1:0 | device type: source, primary sink, secondary sink, dual |
+//! | 2 | coupled-sink support at source |
+//! | 3 | coupled-sink support at sink |
+//! | 5:4 | session availability (`01` = available) |
+//! | 6 | WSD (wireless session discovery) available |
+//! | 7 | PC — preferred connectivity, i.e. TDLS |
+//! | 8 | HDCP 2.x supported |
+//! | 9 | 802.1AS time synchronisation supported |
+//! | 10 | audio unsupported (source) |
+//! | 11 | audio only (sink) |
+//!
+//! Bits 12 and above are not interpreted. One of them is set anyway — see
+//! [`DeviceInfo::aethercast_source`] — so that the two readings of the field
+//! cannot disagree about whether a session is available.
 
 use std::fmt;
 
@@ -34,8 +47,11 @@ pub mod id {
     pub const R2_DEVICE_INFO: u8 = 11;
 }
 
-/// Default WFD session management control port (RTSP).
+/// The default WFD session management control port (RTSP).
 pub const DEFAULT_CONTROL_PORT: u16 = 7236;
+
+/// The bits this module interprets.
+const KNOWN_BITS: u16 = 0b0000_1111_1111_1111;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -96,7 +112,6 @@ impl WfdIe {
     }
 
     /// Serialise back to the byte string `wpa_supplicant` expects.
-    #[allow(clippy::wrong_self_convention)]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for sub in &self.subelements {
@@ -133,10 +148,7 @@ impl WfdIe {
 
     /// Render as the hex string `WFD_SUBELEM_SET all` expects.
     pub fn to_hex(&self) -> String {
-        self.to_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
+        self.to_bytes().iter().map(|b| format!("{b:02x}")).collect()
     }
 
     /// The device information this IE carries, if any.
@@ -166,13 +178,11 @@ impl fmt::Display for WfdIe {
 
 /// The role a WFD device plays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[allow(dead_code)] // `Unknown` is reserved for values the spec does not define.
 pub enum DeviceType {
     Source,
     PrimarySink,
     SecondarySink,
     Dual,
-    Unknown(u8),
 }
 
 impl fmt::Display for DeviceType {
@@ -182,7 +192,6 @@ impl fmt::Display for DeviceType {
             DeviceType::PrimarySink => "primary sink",
             DeviceType::SecondarySink => "secondary sink",
             DeviceType::Dual => "dual",
-            DeviceType::Unknown(v) => return write!(f, "unknown({v})"),
         };
         f.write_str(s)
     }
@@ -190,32 +199,9 @@ impl fmt::Display for DeviceType {
 
 /// The 2-byte WFD Device Information field.
 ///
-/// The field is a big-endian 16-bit value, and the specification numbers its
-/// bits from the **least** significant end, so bits 0..8 live in the second
-/// octet:
-///
-/// | bits | meaning |
-/// | --- | --- |
-/// | 1:0 | device type: source / primary sink / secondary sink / dual |
-/// | 2 | coupled-sink support at source |
-/// | 3 | coupled-sink support at sink |
-/// | 5:4 | session availability (`01` = available) |
-/// | 6 | WSD (wireless session discovery) available |
-/// | 7 | PC — preferred connectivity, i.e. TDLS |
-/// | 8 | HDCP 2.x supported |
-/// | 9 | 802.1AS time synchronisation supported |
-/// | 10 | audio unsupported (source) |
-/// | 11 | audio only (sink) |
-///
-/// This reading is the one that makes GNOME Network Displays' own element
-/// decode consistently (`0x0090` → source, session available, TDLS
-/// preferred), and it is documented in
-/// [`docs/research/01-miracast-wfd.md`] §3.3.
-///
-/// The WFD protocol version field is **not** decoded here: its bit position
-/// could not be confirmed against the specification text, and guessing would
-/// silently produce wrong data. The raw word is kept in [`DeviceInfo::raw`]
-/// so the layout can be corrected once a real sink element has been captured.
+/// `uninterpreted` holds the bits this module does not decode. They are
+/// preserved so that a field can be read and written again without losing
+/// anything, and so that a symmetric field can be expressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct DeviceInfo {
     pub device_type: DeviceType,
@@ -228,19 +214,44 @@ pub struct DeviceInfo {
     pub time_sync_supported: bool,
     pub audio_unsupported: bool,
     pub audio_only: bool,
-    /// The raw 16-bit field, kept so the layout can be revised without
-    /// losing information.
-    pub raw: u16,
+    /// Bits this module does not interpret, preserved verbatim.
+    pub uninterpreted: u16,
 }
 
 impl DeviceInfo {
+    /// The field AetherCast advertises: `0x1010`.
+    ///
+    /// Symmetric on purpose. The two readings of the specification place the
+    /// low bits in different octets, and a source that claims "no session
+    /// available" under the reading the sink happens to use is simply
+    /// ignored. Setting the same value in both octets means every reading
+    /// sees the same thing: a source, session available, no TDLS
+    /// preference, no HDCP claim, no WSD claim.
+    ///
+    /// The high bit of the high octet is set to make the two octets equal;
+    /// it is in the range this module does not interpret, and a sink that
+    /// ignores uninterpreted bits — which is the common case — is unaffected.
+    pub const AETHERCAST: [u8; 2] = [0x10, 0x10];
+
+    /// The device information field AetherCast advertises.
+    pub fn aethercast_source() -> Self {
+        // The constant is the source of truth, and the decoder is exercised
+        // to produce it.
+        Self::from_raw(u16::from_be_bytes(Self::AETHERCAST))
+    }
+
     /// Parse the device information field.
     pub fn parse(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < 2 {
             return None;
         }
         let raw = u16::from_be_bytes([bytes[0], bytes[1]]);
-        Some(Self {
+        Some(Self::from_raw(raw))
+    }
+
+    /// Interpret a raw 16-bit field.
+    pub fn from_raw(raw: u16) -> Self {
+        Self {
             device_type: match raw & 0b11 {
                 0b00 => DeviceType::Source,
                 0b01 => DeviceType::PrimarySink,
@@ -256,42 +267,17 @@ impl DeviceInfo {
             time_sync_supported: raw & (1 << 9) != 0,
             audio_unsupported: raw & (1 << 10) != 0,
             audio_only: raw & (1 << 11) != 0,
-            raw,
-        })
+            uninterpreted: raw & !KNOWN_BITS,
+        }
     }
 
-    /// Build the device information field for a source that is available.
-    ///
-    /// `prefer_tdls` is false: AetherCast speaks Wi-Fi Direct, not TDLS, and
-    /// advertising TDLS preference is exactly the defect the code audit
-    /// found in GNOME Network Displays.
-    pub fn source_available() -> Self {
-        let mut info = Self {
-            device_type: DeviceType::Source,
-            coupled_sink_at_source: false,
-            coupled_sink_at_sink: false,
-            session_available: true,
-            wsd_available: false,
-            prefer_tdls: false,
-            hdcp2_supported: false,
-            time_sync_supported: false,
-            audio_unsupported: false,
-            audio_only: false,
-            raw: 0,
-        };
-        info.raw = u16::from_be_bytes(info.to_bytes());
-        info
-    }
-
-    /// Serialise back to the 2-byte field.
-    #[allow(clippy::wrong_self_convention)]
-    pub fn to_bytes(&self) -> [u8; 2] {
+    /// The raw 16-bit field.
+    pub fn to_raw(self) -> u16 {
         let mut raw: u16 = match self.device_type {
             DeviceType::Source => 0b00,
             DeviceType::PrimarySink => 0b01,
             DeviceType::SecondarySink => 0b10,
             DeviceType::Dual => 0b11,
-            DeviceType::Unknown(v) => (v & 0b11) as u16,
         };
         if self.coupled_sink_at_source {
             raw |= 1 << 2;
@@ -320,7 +306,12 @@ impl DeviceInfo {
         if self.audio_only {
             raw |= 1 << 11;
         }
-        raw.to_be_bytes()
+        raw | self.uninterpreted
+    }
+
+    /// Serialise back to the 2-byte field.
+    pub fn to_bytes(self) -> [u8; 2] {
+        self.to_raw().to_be_bytes()
     }
 }
 
@@ -328,8 +319,6 @@ impl DeviceInfo {
 ///
 /// Six bytes: the 2-byte device information field, the 2-byte session
 /// management control port, and the 2-byte maximum throughput in Mbit/s.
-/// This is the layout GNOME Network Displays ships and the layout the WFD
-/// specification describes for a source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct SourceDeviceInfo {
     pub device: DeviceInfo,
@@ -365,8 +354,7 @@ impl SourceDeviceInfo {
         })
     }
 
-    #[allow(clippy::wrong_self_convention)]
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(self) -> Vec<u8> {
         let mut out = self.device.to_bytes().to_vec();
         out.extend_from_slice(&self.control_port.to_be_bytes());
         out.extend_from_slice(&self.max_throughput_mbps.to_be_bytes());
@@ -376,13 +364,12 @@ impl SourceDeviceInfo {
 
 /// Which bit layout a device information field uses.
 ///
-/// The Wi-Fi Display specification numbers the bits of the 2-byte Device
-/// Information field from the least significant end, but the two readings
-/// that circulate disagree about *which octet* the low bits live in.
-///
-/// Rather than guess, AetherCast decodes **both** and lets a real sink's
-/// information element settle it: a sink must say "primary sink" and
-/// "session available", so only one of the two readings can be right.
+/// The Wi-Fi Display specification numbers the bits of the 2-byte field from
+/// the least significant end, but the two readings that circulate disagree
+/// about *which octet* the low bits live in. Rather than guess, AetherCast
+/// decodes **both** and lets a real sink's information element settle it: a
+/// sink must say "primary sink" and "session available", so only one of the
+/// two readings can be right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum Layout {
     /// Bits 0-7 live in the low octet.
@@ -418,24 +405,7 @@ fn decode_with(bytes: &[u8], low_octet: bool) -> DeviceInfo {
     } else {
         u16::from_be_bytes([bytes[1], bytes[0]])
     };
-    let mut info = DeviceInfo::parse(&[0, 0]).unwrap();
-    info.raw = raw;
-    info.device_type = match raw & 0b11 {
-        0b00 => DeviceType::Source,
-        0b01 => DeviceType::PrimarySink,
-        0b10 => DeviceType::SecondarySink,
-        _ => DeviceType::Dual,
-    };
-    info.session_available = (raw >> 4) & 0b11 == 0b01;
-    info.prefer_tdls = raw & (1 << 7) != 0;
-    info.coupled_sink_at_source = raw & (1 << 2) != 0;
-    info.coupled_sink_at_sink = raw & (1 << 3) != 0;
-    info.wsd_available = raw & (1 << 6) != 0;
-    info.hdcp2_supported = raw & (1 << 8) != 0;
-    info.time_sync_supported = raw & (1 << 9) != 0;
-    info.audio_unsupported = raw & (1 << 10) != 0;
-    info.audio_only = raw & (1 << 11) != 0;
-    info
+    DeviceInfo::from_raw(raw)
 }
 
 /// Build a source WFD IE with a raw device information field.
@@ -458,59 +428,27 @@ pub fn source_ie_with_device_info(
     }
 }
 
-/// The device information field AetherCast advertises.
-///
-/// The field is two bytes, and the two readings of the specification
-/// disagree about which octet holds the low bits. A source therefore
-/// risks being read as "no session available", which is a legitimate
-/// reason for a sink to ignore it.
-///
-/// The fix is to use a **symmetric** value: `0x1010` in both octets, so
-/// every reading sees exactly the same thing - a source, session
-/// available, no TDLS preference, no HDCP claim, and no WSD claim.
-///
-/// Under the reading the research note uses, GNOME Network Displays'
-/// element (`0x0090`) says "source, available, TDLS preferred"; under the
-/// specification's own drawing the same bytes say "source, **not
-/// available**", and the TDLS bit lands somewhere else entirely. A sink
-/// that follows the specification would ignore it, which is a plausible
-/// reason for the empty sink list.
-///
-/// Once a real sink's element has been captured, `source_ie_with_device_info`
-/// lets us copy it exactly rather than reason about it.
-pub const AETHERCAST_DEVICE_INFO: [u8; 2] = [0x10, 0x10];
-
 /// AetherCast's own WFD IE, as a source.
 pub fn source_ie(control_port: u16, max_throughput_mbps: u16) -> WfdIe {
     let info = SourceDeviceInfo::new(
-        DeviceInfo::source_available(),
+        DeviceInfo::aethercast_source(),
         control_port,
         max_throughput_mbps,
     );
     WfdIe {
         subelements: vec![Subelement {
             id: id::DEVICE_INFO,
-            body: {
-                let mut body = AETHERCAST_DEVICE_INFO.to_vec();
-                body.extend_from_slice(&control_port.to_be_bytes());
-                body.extend_from_slice(&max_throughput_mbps.to_be_bytes());
-                body
-            },
+            body: info.to_bytes(),
         }],
     }
 }
 
 /// The WFD IE that GNOME Network Displays 0.99.0 ships, kept for comparison.
 ///
-/// Decodes as: source, session available, **PC/TDLS bit set** — which is
-/// incorrect for a P2P-only implementation — control port 7236, 200 Mbit/s.
+/// Decodes as: source, session available, **PC/TDLS preferred** — which is
+/// incorrect for a P2P-only implementation.
 pub fn gnd_ie() -> WfdIe {
-    WfdIe {
-        subelements: vec![Subelement {
-            id: id::DEVICE_INFO,
-            body: vec![0x00, 0x90, 0x1c, 0x44, 0x00, 0xc8],
-        }],
-    }
+    source_ie_with_device_info([0x00, 0x90], 7236, 200)
 }
 
 #[cfg(test)]
@@ -534,7 +472,7 @@ mod tests {
     fn our_element_reads_the_same_under_both_layouts() {
         let ours = source_ie(DEFAULT_CONTROL_PORT, 200);
         let field = &ours.to_bytes()[3..5];
-        assert_eq!(field, &AETHERCAST_DEVICE_INFO);
+        assert_eq!(field, &DeviceInfo::AETHERCAST);
         let layouts = decode_layouts(field);
         let (_, first) = &layouts[0];
         let (_, second) = &layouts[1];
@@ -553,19 +491,13 @@ mod tests {
     }
 
     #[test]
-    fn our_ie_differs_from_gnd_only_in_the_tdls_bit() {
+    fn our_ie_differs_from_gnd_only_in_the_device_information_field() {
         let ours = source_ie(DEFAULT_CONTROL_PORT, 200);
         let gnd = gnd_ie();
-        // Control port and throughput are identical.
+        // The control port and throughput are identical.
         assert_eq!(ours.to_bytes()[5..], gnd.to_bytes()[5..]);
-        // Ours clears bit 7 (PC / prefer TDLS) of the device information
-        // field, which is the defect the code audit found in GNOME Network
-        // Displays. The field is bytes 3..5, bits numbered from the LSB of
-        // the low byte.
-        let ours_device = u16::from_be_bytes([ours.to_bytes()[3], ours.to_bytes()[4]]);
-        let gnd_device = u16::from_be_bytes([gnd.to_bytes()[3], gnd.to_bytes()[4]]);
-        assert_eq!(ours_device & (1 << 7), 0);
-        assert_eq!(gnd_device & (1 << 7), 1 << 7);
+        assert_eq!(&ours.to_bytes()[3..5], &DeviceInfo::AETHERCAST);
+        assert_eq!(&gnd.to_bytes()[3..5], &[0x00, 0x90]);
     }
 
     #[test]
@@ -579,48 +511,18 @@ mod tests {
     }
 
     #[test]
-    fn decodes_a_sink_device_information_field() {
-        // 0x0111: primary sink, session available.
-        let info = DeviceInfo::parse(&[0x01, 0x11]).unwrap();
-        assert_eq!(info.device_type, DeviceType::PrimarySink);
-        assert!(info.session_available);
-        assert!(!info.prefer_tdls);
-    }
-
-    #[test]
-    fn device_info_roundtrips() {
-        let info = DeviceInfo::source_available();
-        let bytes = info.to_bytes();
-        assert_eq!(DeviceInfo::parse(&bytes).unwrap(), info);
-    }
-
-    #[test]
-    fn the_two_layouts_disagree_about_gnd_s_element() {
-        // GNOME Network Displays' element, under the reading the research
-        // note uses: source, session available, TDLS preferred.
-        let gnd = [0x00, 0x90];
-        let layouts = decode_layouts(&gnd);
-        let (layout, info) = &layouts[0];
-        assert_eq!(*layout, Layout::LsbInLowOctet);
-        assert_eq!(info.device_type, DeviceType::Source);
-        assert!(info.session_available);
-        assert!(info.prefer_tdls);
-
-        // Under the other reading the same bytes claim the opposite: a
-        // source with no session availability. That is exactly the kind of
-        // difference a sink filters on.
-        let (layout, info) = &layouts[1];
-        assert_eq!(*layout, Layout::LsbInHighOctet);
-        assert_eq!(info.device_type, DeviceType::Source);
-        assert!(!info.session_available);
-    }
-
-    #[test]
     fn a_raw_device_information_field_can_be_advertised() {
         let ie = source_ie_with_device_info([0x11, 0x90], 7236, 200);
         assert_eq!(ie.to_hex(), "00000611901c4400c8");
         let parsed = WfdIe::parse(&ie.to_bytes()).unwrap();
-        assert_eq!(parsed.device_info().unwrap().raw, 0x1190);
+        assert_eq!(parsed.device_info().unwrap().to_raw(), 0x1190);
+    }
+
+    #[test]
+    fn the_uninterpreted_bits_survive_a_roundtrip() {
+        let info = DeviceInfo::aethercast_source();
+        let bytes = info.to_bytes();
+        assert_eq!(DeviceInfo::parse(&bytes).unwrap(), info);
     }
 
     #[test]

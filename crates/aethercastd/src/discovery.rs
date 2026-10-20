@@ -164,7 +164,10 @@ mod tests {
         let pairs = parse_key_values(
             "P2P_EVENT_DEVICE_FOUND p2p_dev_addr=aa:bb:cc:dd:ee:ff name='Living Room TV' src_freq=2412",
         );
-        assert_eq!(pairs[0], ("p2p_dev_addr".into(), "aa:bb:cc:dd:ee:ff".into()));
+        assert_eq!(
+            pairs[0],
+            ("p2p_dev_addr".into(), "aa:bb:cc:dd:ee:ff".into())
+        );
         assert_eq!(pairs[1], ("name".into(), "Living Room TV".into()));
         assert_eq!(pairs[2], ("src_freq".into(), "2412".into()));
     }
