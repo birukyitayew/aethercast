@@ -5,6 +5,7 @@
 //! negotiation come next.
 
 mod discovery;
+mod hw;
 mod media;
 mod p2p;
 mod radio;
@@ -648,6 +649,19 @@ fn doctor(cli: &Cli, mut radio: Radio) -> Result<()> {
         Some(w) => println!("radio health     : WEDGED — {}", w.explanation),
         None => println!("radio health     : ok"),
     }
+    let adapter = hw::Adapter::detect();
+    println!(
+        "adapter          : {} ({})",
+        if adapter.phy.is_empty() {
+            "unknown"
+        } else {
+            &adapter.phy
+        },
+        adapter.band_names()
+    );
+    if let Some(limitation) = adapter.limitation() {
+        println!("  limitation     : {limitation}");
+    }
     match &wfd {
         Some(ie) => {
             println!("wfd element      : armed");
@@ -806,7 +820,12 @@ fn discover(cli: &Cli, mut radio: Radio, args: &DiscoverArgs) -> Result<()> {
         } else {
             println!("  radio: healthy, the search ran to completion");
         }
-        println!("  hint: make sure the sink is in Miracast / Screen Share mode");
+        // The two most common reasons, named explicitly.
+        let adapter = hw::Adapter::detect();
+        if let Some(limitation) = adapter.limitation() {
+            println!("  adapter: {limitation}");
+        }
+        println!("  sink: make sure it is in Miracast / Screen Share mode, and that it advertises on a band this adapter can hear");
         return Ok(());
     }
 
