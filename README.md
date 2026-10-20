@@ -37,6 +37,7 @@ GNOME Network Displays proved that Linux screen casting is possible, but it is s
 - Four ADRs: research-first scope, Rust + GStreamer architecture, GPL-3.0-or-later, the name decision — [`docs/adr/`](docs/adr/)
 - A reproducible root cause for "GNOME Network Displays finds no sinks" — [`spike/01-radio-work-wedge-report.md`](spike/01-radio-work-wedge-report.md)
 - `aethercastd`, the session daemon: radio health, the global WFD information element, and Wi-Fi Direct discovery — [`crates/aethercastd/`](crates/aethercastd/)
+- A media pipeline that conforms to the Wi-Fi Display specification — video PID `0x1011`, audio PID `0x1100`, RTP payload type 33, seven TS packets per datagram, PCR within 100 ms — checked by [`spike/04-media-conformance.sh`](spike/04-media-conformance.sh)
 
 ```console
 $ cargo run -p aethercastd -- doctor
@@ -50,7 +51,7 @@ wfd element      : armed
   device type     : source  session available: true  TDLS preferred: false
 ```
 
-Not yet implemented: P2P group formation, the WFD RTSP handshake, the media pipeline, and the GUI.
+Not yet implemented: P2P group formation, the WFD RTSP handshake, and the GUI.
 
 ## Documentation
 

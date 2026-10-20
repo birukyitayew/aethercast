@@ -5,6 +5,7 @@
 //! negotiation come next.
 
 mod discovery;
+mod media;
 mod radio;
 mod supplicant;
 mod wfd;
@@ -14,8 +15,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use gstreamer::prelude::*;
 
 use crate::discovery::Peer;
+use crate::media::Encoder;
 use crate::radio::Radio;
 use crate::wfd::{WfdIe, DEFAULT_CONTROL_PORT};
 
@@ -55,6 +58,52 @@ enum Command {
     Recover,
     /// Search for Wi-Fi Direct peers and report Miracast sinks.
     Discover(DiscoverArgs),
+    /// Inspect and exercise the media pipeline.
+    #[command(subcommand)]
+    Media(MediaCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum MediaCommand {
+    /// Report the available encoders and the elements the pipeline needs.
+    Probe,
+    /// Run the pipeline into an MPEG-TS file and validate it.
+    Test(MediaTestArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct MediaTestArgs {
+    /// Where to write the MPEG-TS file.
+    #[arg(long, default_value = "/tmp/aethercast-test.ts")]
+    out: String,
+    /// How long to run, in seconds.
+    #[arg(long, default_value_t = 5)]
+    seconds: u32,
+    /// Width in pixels.
+    #[arg(long, default_value_t = 640)]
+    width: i32,
+    /// Height in pixels.
+    #[arg(long, default_value_t = 480)]
+    height: i32,
+    /// Frames per second. Zero keeps the capture rate.
+    #[arg(long, default_value_t = 30)]
+    framerate: i32,
+    /// Bitrate in kbit/s.
+    #[arg(long, default_value_t = 2000)]
+    bitrate: u32,
+    /// Encoder to use.
+    #[arg(long, value_enum, default_value_t = Encoder::Auto)]
+    encoder: Encoder,
+    /// Also capture the system audio mix.
+    #[arg(long)]
+    audio: bool,
+    /// The PulseAudio source to capture. Use the monitor of the default
+    /// sink for the system mix.
+    #[arg(long, default_value = "default")]
+    audio_device: String,
+    /// Send RTP over UDP to this host:port instead of writing a file.
+    #[arg(long)]
+    udp: Option<String>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -92,6 +141,8 @@ struct DiscoverArgs {
 }
 
 fn main() -> Result<()> {
+    // GStreamer has to be initialised before any element is looked up.
+    gstreamer::init().ok();
     let cli = Cli::parse();
     let radio = Radio::open(&cli.iface).context("opening the wpa_supplicant control interface")?;
 
@@ -100,7 +151,149 @@ fn main() -> Result<()> {
         Command::Arm(args) => arm(&cli, radio, args),
         Command::Recover => recover(&cli, radio),
         Command::Discover(args) => discover(&cli, radio, args),
+        Command::Media(MediaCommand::Probe) => media_probe(&cli),
+        Command::Media(MediaCommand::Test(args)) => media_test(&cli, args),
     }
+}
+
+/// Report what the media pipeline can use on this machine.
+fn media_probe(cli: &Cli) -> Result<()> {
+    let encoders = media::available_encoders();
+    let elements = [
+        "ximagesrc",
+        "videoconvert",
+        "queue",
+        "h264parse",
+        "mpegtsmux",
+        "rtpmp2tpay",
+        "udpsink",
+        "filesink",
+        "pulsesrc",
+        "avenc_aac",
+    ];
+    let mut missing = Vec::new();
+    for element in elements {
+        if gstreamer::ElementFactory::find(element).is_none() {
+            missing.push(element);
+        }
+    }
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "encoders": encoders.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>(),
+                "missing_elements": missing,
+                "pids": {
+                    "pmt": media::PID_PMT,
+                    "pcr": media::PID_PCR,
+                    "video": media::PID_VIDEO,
+                    "audio": media::PID_AUDIO,
+                },
+                "rtp": { "payload_type": media::RTP_PAYLOAD_TYPE, "mtu": media::RTP_MTU },
+            }))?
+        );
+        return Ok(());
+    }
+    println!("encoders installed  :");
+    for encoder in &encoders {
+        println!("  - {encoder:?}");
+    }
+    if encoders.is_empty() {
+        println!("  (none — install gstreamer1.0-plugins-ugly for x264enc)");
+    }
+    println!(
+        "missing elements    : {}",
+        if missing.is_empty() {
+            "none".to_string()
+        } else {
+            missing.join(", ")
+        }
+    );
+    println!(
+        "wfd pids            : pmt=0x{:04x} pcr=0x{:04x} video=0x{:04x} audio=0x{:04x}",
+        media::PID_PMT, media::PID_PCR, media::PID_VIDEO, media::PID_AUDIO
+    );
+    println!(
+        "rtp                 : payload type {}, mtu {}",
+        media::RTP_PAYLOAD_TYPE, media::RTP_MTU
+    );
+    Ok(())
+}
+
+/// Run the pipeline into a file so the encode and the mux can be validated
+/// without a sink.
+fn media_test(cli: &Cli, args: &MediaTestArgs) -> Result<()> {
+    let profile = media::Profile {
+        width: args.width,
+        height: args.height,
+        framerate: args.framerate,
+        bitrate_bps: args.bitrate * 1000,
+        encoder: args.encoder,
+        audio: args.audio,
+        audio_device: args.audio_device.clone(),
+    };
+    // A UDP destination exercises the RTP transport; a file keeps bare
+    // MPEG-TS so the stream can be validated with ffprobe.
+    let sink = match &args.udp {
+        Some(target) => {
+            let (host, port) = target
+                .split_once(':')
+                .ok_or_else(|| anyhow::anyhow!("--udp expects host:port"))?;
+            media::Sink::Udp {
+                host: host.to_string(),
+                port: port.parse()?,
+            }
+        }
+        None => media::Sink::File(args.out.clone()),
+    };
+    let built = media::build(&profile, &sink)?;
+
+    let bus = built.pipeline.bus().expect("the pipeline has a bus");
+    built.pipeline.set_state(gstreamer::State::Playing)?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(args.seconds as u64);
+    while std::time::Instant::now() < deadline {
+        if let Some(message) = bus.timed_pop(gstreamer::ClockTime::from_mseconds(200)) {
+            match message.view() {
+                gstreamer::MessageView::Error(err) => {
+                    let debug = err.debug().unwrap_or_default();
+                    built.pipeline.set_state(gstreamer::State::Null).ok();
+                    anyhow::bail!("pipeline error: {}\n{}", err.error(), debug);
+                }
+                gstreamer::MessageView::Eos(_) => break,
+                _ => {}
+            }
+        }
+    }
+    built.pipeline.set_state(gstreamer::State::Null).ok();
+
+    let size = std::fs::metadata(&args.out).map(|m| m.len()).unwrap_or(0);
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "file": args.out,
+                "bytes": size,
+                "encoder": format!("{:?}", built.encoder),
+                "encoder_element": built.encoder_element,
+                "profile": {
+                    "width": profile.width,
+                    "height": profile.height,
+                    "framerate": profile.framerate,
+                    "bitrate_bps": profile.bitrate_bps,
+                },
+            }))?
+        );
+    } else {
+        println!(
+            "wrote {} bytes to {} (encoder: {} / {:?})",
+            size, args.out, built.encoder_element, built.encoder
+        );
+    }
+    if args.udp.is_none() && size == 0 {
+        anyhow::bail!("the pipeline produced no data");
+    }
+    Ok(())
 }
 
 fn doctor(cli: &Cli, mut radio: Radio) -> Result<()> {

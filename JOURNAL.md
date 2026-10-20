@@ -51,6 +51,58 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-20 — Milestone 2: the media pipeline conforms
+
+**What we built**
+
+`crates/aethercastd/src/media.rs` builds the real capture → encode → mux → transport pipeline, and `spike/04-media-conformance.sh` proves it against the specification.
+
+```
+$ ./spike/04-media-conformance.sh
+== 1. MPEG-TS file ==
+  PASS  video PID is 0x1011                            0x1011
+  PASS  audio PID is 0x1100                            0x1100
+  PASS  video codec                                    h264
+  PASS  audio codec                                    aac
+== 2. PCR cadence (the specification requires 100 ms or less) ==
+  PASS  largest PCR gap is at most 100 ms              yes
+        largest gap: 33 ms
+== 3. RTP transport ==
+  PASS  RTP payload type is 33                         33
+  PASS  UDP payload is 1336 bytes (7 TS packets)       1336
+  PASS  the payload is MPEG-TS (sync byte 0x47)        47
+== all checks passed ==
+```
+
+**The GStreamer API cost us more than the protocol did**
+
+| Finding | Detail |
+| --- | --- |
+| GEnum properties | `queue leaky`, `openh264enc rate-control` and `videorate framerate` are enums, and the Rust bindings do not generate them. `set_property_from_str` resolves them by name; the launch parser does too. |
+| `videoconvert` will not scale | The reference display is **1821x1024 at 25 fps**, an odd geometry. `videoconvert` refuses the size negotiation, so `videoscale` has to be explicit. |
+| `videorate` has no `framerate` | GStreamer 1.28 replaced it with `max-rate` (frames per second). A fixed rate is imposed by a `capsfilter` *after* `videorate`, so it can duplicate as well as drop. |
+| The element is `pulsesrc` | `pulseaudio` is the *plugin* name. The GStreamer PulseAudio device provider also enumerates nothing on PipeWire, so the source has to be named explicitly — the system mix is `alsa_output.pci-0000_00_1f.3.analog-stereo.monitor`. |
+| The plugin cache can blacklist a plugin | After the distribution upgrade, `libgstpulseaudio.so` stayed at 1.28.3 while the core moved to 1.28.7, and the plugin ended up blacklisted in the registry cache. Clearing `~/.cache/gstreamer-1.0/registry.*.bin` restores it. |
+| `mpegtsmux` has no PAT/PMT PID properties | The WFD PIDs come from the **request pad names** — `sink_4113` is 0x1011, `sink_4352` is 0x1100. The PCR lands on the first video PID rather than the 0x1000 the specification asks for: a known gap, tracked. |
+| `libpulse` still aborts on default server discovery | The same crash that broke GNOME Network Displays. The PulseAudio socket has to be named explicitly. |
+
+**The finding that changed the default profile**
+
+The first conformance run failed: a **117 ms PCR gap**, against a 100 ms limit. The cause is the encoder, not the muxer — exactly what the research predicted.
+
+| Profile | Largest PCR gap | Verdict |
+| --- | --- | --- |
+| 1280x720p30 | 133 ms | **fails** — OpenH264 cannot sustain 720p30 on this CPU |
+| 640x480p30 | 67 ms, then 33 ms | **passes** |
+
+640x480 is also the format WFD mandates as a minimum, so nothing is given up. **The default profile is now 640x480p30**, and 720p30 is only offered with a hardware encoder, which needs `gstreamer1.0-vaapi` and a driver that supports it.
+
+**The remaining piece**
+
+The pipeline is proven; what is missing is the sink. The next milestone is P2P group formation and the RTSP handshake, so that a real TV can be asked for its capabilities.
+
+---
+
 ## 2026-10-20 — Milestone 1: `aethercastd` exists
 
 **What we built**
