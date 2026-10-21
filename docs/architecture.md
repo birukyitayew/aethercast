@@ -85,6 +85,40 @@ Windows and GNOME Network Displays.
 That is a class of failure, not a quirk, and it is why the diagnosis
 layer exists.
 
+## The API
+
+The daemon serves one interface on the session bus:
+
+```
+io.github.birukyitayew.aethercast.Manager
+  at /io/github/birukyitayew/aethercast
+```
+
+| Method | What it does |
+| --- | --- |
+| `Version` | the interface version |
+| `ListDevices` | the sinks we know about, as JSON |
+| `ListSessions` | the casting sessions, as JSON |
+| `GetDiagnostics` | a snapshot of the environment, as JSON |
+| `ArmWfdElement` | advertise a WFD information element, as hex |
+| `StartCast` | cast to a device, and return a session identifier |
+| `StopCast` | stop a session |
+
+Structured data is returned as **JSON**, so the interface can grow
+without breaking the clients that came before it. The published contract
+is [`dbus/io.github.birukyitayew.aethercast.Manager.xml`](../dbus/io.github.birukyitayew.aethercast.Manager.xml),
+and a test checks that the contract and the implementation do not drift
+apart — the daemon refuses to start if the contract does not describe the
+interface it serves.
+
+The command line and the bus sit on the same `core::Manager`, so they
+can never disagree about what the daemon is doing, and neither of them
+owns state that the other one also owns.
+
+Signals are the next part of the API: a client has to be told when a
+device appears and when a session changes state rather than polling for
+it, and the client is what needs them.
+
 ## The reference sink
 
 `spike/18-reference-sink.py` is the project's oracle. It plays the sink

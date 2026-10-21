@@ -29,6 +29,10 @@ pub enum Error {
 }
 
 /// A radio-work item that is wedged.
+/// How long a scan work item may stay in flight before the queue counts as
+/// wedged. A normal scan finishes in well under a second.
+pub const WEDGE_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// One entry in the `wpa_supplicant` radio-work queue.
 ///
 /// The control interface prints entries as

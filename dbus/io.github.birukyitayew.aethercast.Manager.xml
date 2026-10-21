@@ -1,0 +1,68 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  The AetherCast session manager.
+
+  This file is the published contract. The implementation lives in
+  crates/aethercastd/src/dbus.rs, and a test checks that the two do not
+  drift apart: the method names in the implementation are compared with the
+  ones here.
+
+  Every method that returns structured data returns JSON, so that the
+  interface can grow without breaking older clients. A client that does not
+  understand a field ignores it.
+-->
+<node name="/io/github/birukyitayew/aethercast">
+  <interface name="io.github.birukyitayew.aethercast.Manager">
+
+    <!-- The interface version, as a string. -->
+    <method name="Version">
+      <arg type="s" name="version" direction="out"/>
+    </method>
+
+    <!-- The devices we know about, as a JSON array. -->
+    <method name="ListDevices">
+      <arg type="s" name="devices" direction="out"/>
+    </method>
+
+    <!-- The casting sessions we know about, as a JSON array. -->
+    <method name="ListSessions">
+      <arg type="s" name="sessions" direction="out"/>
+    </method>
+
+    <!-- A snapshot of the environment, as JSON. -->
+    <method name="GetDiagnostics">
+      <arg type="s" name="diagnostics" direction="out"/>
+    </method>
+
+    <!--
+      Advertise a WFD information element. The argument is the element
+      body in hex, as wpa_supplicant's WFD_SUBELEM_SET takes it. An empty
+      argument restores AetherCast's own element.
+    -->
+    <method name="ArmWfdElement">
+      <arg type="s" name="element" direction="in"/>
+      <arg type="s" name="armed" direction="out"/>
+    </method>
+
+    <!-- Start casting to a device, and return the session identifier. -->
+    <method name="StartCast">
+      <arg type="s" name="device" direction="in"/>
+      <arg type="s" name="profile" direction="in"/>
+      <arg type="s" name="session" direction="out"/>
+    </method>
+
+    <!-- Stop a casting session. -->
+    <method name="StopCast">
+      <arg type="s" name="session" direction="in"/>
+      <arg type="b" name="stopped" direction="out"/>
+    </method>
+
+    <!--
+      Signals are part of the design and land with the client: a client has
+      to be told when a device appears and when a session changes state,
+      rather than polling. They are declared here as they are implemented,
+      so that the contract never promises something the daemon does not do.
+    -->
+  </interface>
+</node>

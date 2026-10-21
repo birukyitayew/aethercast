@@ -48,6 +48,9 @@ jobs:
       - name: Test
         run: cargo test --all
 
+      - name: Test the D-Bus API on a real session bus
+        run: dbus-run-session -- cargo test --all the_api_answers_on_the_session_bus
+
       - name: Lint
         run: |
           cargo clippy --all-targets -- -D warnings

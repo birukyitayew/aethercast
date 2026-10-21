@@ -4,6 +4,9 @@
 //! Wi-Fi Direct discovery. The media pipeline and the WFD session
 //! negotiation come next.
 
+mod cast;
+mod core;
+mod dbus;
 mod discovery;
 mod hw;
 mod media;
@@ -24,10 +27,6 @@ use crate::discovery::Peer;
 use crate::media::Encoder;
 use crate::radio::Radio;
 use crate::wfd::{WfdIe, DEFAULT_CONTROL_PORT};
-
-/// How long a scan work item may stay in flight before we call the queue
-/// wedged. A normal scan finishes in well under a second.
-const WEDGE_THRESHOLD: Duration = Duration::from_secs(20);
 
 #[derive(Parser, Debug)]
 #[command(
@@ -75,6 +74,8 @@ enum Command {
     Wfd(WfdCommand),
     /// Cast to a sink: run the WFD handshake and stream to it.
     Cast(CastArgs),
+    /// Serve the D-Bus API on the session bus.
+    Daemon,
 }
 
 #[derive(clap::Args, Debug)]
@@ -283,7 +284,11 @@ fn main() -> Result<()> {
         Command::Doctor => doctor(&cli, open_radio(&cli)?),
         Command::Arm(args) => arm(&cli, open_radio(&cli)?, args),
         Command::Recover => recover(&cli, open_radio(&cli)?),
-        Command::Discover(args) => discover(&cli, open_radio(&cli)?, args),
+        Command::Discover(args) => {
+            let manager = core::Manager::new(&cli.iface);
+            manager.open_radio().map_err(|e| anyhow::anyhow!("{e}"))?;
+            discover(&cli, &manager, args)
+        }
         Command::Media(MediaCommand::Probe) => media_probe(&cli),
         Command::Media(MediaCommand::Test(args)) => media_test(&cli, args),
         Command::Rtsp(RtspCommand::Serve(args)) => rtsp_serve(&cli, args),
@@ -292,6 +297,12 @@ fn main() -> Result<()> {
         Command::P2p(P2pCommand::Listen(args)) => p2p_listen(&cli, open_radio(&cli)?, args),
         Command::Wfd(WfdCommand::Decode(args)) => wfd_decode(&cli, args),
         Command::Cast(args) => cast(&cli, args),
+        Command::Daemon => {
+            let manager = std::sync::Arc::new(core::Manager::new(&cli.iface));
+            // The runtime is only needed for the bus, and the bus is only
+            // needed by the daemon.
+            tokio::runtime::Runtime::new()?.block_on(dbus::serve(manager))
+        }
     }
 }
 
@@ -310,107 +321,7 @@ fn open_radio(cli: &Cli) -> Result<Radio> {
 /// The sink connects to our RTSP control port, we negotiate with it, and
 /// then the media pipeline starts streaming to the RTP port it asked for.
 fn cast(cli: &Cli, args: &CastArgs) -> Result<()> {
-    // On a Wi-Fi Display session the sink reaches us on the group
-    // interface, so the group has to exist before the server is bound.
-    // The radio is optional here: a sink that already found us does not
-    // need us to be advertising, and a build server has no adapter at all.
-    let mut radio = match Radio::open(&cli.iface) {
-        Ok(radio) => Some(radio),
-        Err(e) => {
-            if args.group {
-                return Err(e).context("forming a group needs the wireless adapter");
-            }
-            eprintln!("note: no wireless adapter ({e}), serving the session anyway");
-            None
-        }
-    };
-
-    let mut group_address = None;
-    if args.group {
-        let radio = radio
-            .as_mut()
-            .expect("the radio was opened for a group request");
-        // A group left over from an earlier session can make the next one
-        // fail with "Name not unique on network", so clear it first.
-        let _ = radio.p2p_group_remove();
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let removed = radio.remove_stale_group_interfaces()?;
-        if !removed.is_empty() {
-            println!("removed stale group interface(s): {}", removed.join(", "));
-        } else if !radio.p2p_group_interfaces().is_empty() {
-            let stale = radio.p2p_group_interfaces().join(", ");
-            println!("note: {stale} is left over and needs 'sudo iw dev {stale} del'");
-        }
-
-        let before = radio.p2p_group_interfaces();
-        radio.p2p_group_add(args.freq)?;
-        println!("group requested (freq: {:?})", args.freq);
-        let interface =
-            radio.wait_for_group_interface(&before, std::time::Duration::from_secs(20))?;
-        match interface {
-            Some((interface, address)) => {
-                println!("the group is up on {interface} ({address})");
-                println!(
-                    "a sink must join the group and connect to {address}:{}",
-                    args.port
-                );
-                group_address = Some(address);
-            }
-            None => {
-                println!("the group interface has no address yet - it gets one");
-                println!("when a peer joins, so the session will be served on all");
-                println!("addresses until then");
-            }
-        }
-    }
-
-    let server = match group_address {
-        Some(address) => rtsp::Server::bind_to(std::net::IpAddr::V4(address), args.port),
-        None => rtsp::Server::bind(args.port),
-    }
-    .map_err(|e| anyhow::anyhow!("binding port {} failed: {e}", args.port))?;
-    println!(
-        "waiting for a sink on port {} for up to {}s",
-        server.port(),
-        args.wait
-    );
-
-    // The sink has to be discoverable before it can connect, so advertise.
-    if let Some(radio) = radio.as_mut() {
-        let ie = wfd::source_ie(rtsp::DEFAULT_CONTROL_PORT, 200);
-        let _ = radio.set_wfd_ie(&ie);
-    }
-
-    let mut log = |line: &str| {
-        if cli.json {
-            println!("{}", serde_json::json!({ "event": line }));
-        } else {
-            println!("{line}");
-        }
-    };
-
-    let session = server.handle_once(&mut log)?;
-    log(&format!("handshake reached {:?}", session.stage));
-    if let Some(caps) = &session.capabilities {
-        log(&format!("sink capabilities: {caps:?}"));
-    }
-    if let Some(caps) = &session.capabilities {
-        if caps.is_primary_sink() {
-            log("the sink is a primary sink: it wants a single MPEG-TS stream");
-        } else {
-            log("the sink is a secondary sink: it wants audio only");
-        }
-    }
-    let Some(rtp_port) = session.rtp_port else {
-        anyhow::bail!("the sink did not give us an RTP port, so there is nowhere to stream to");
-    };
-    log(&format!(
-        "streaming to {}:{} for {}s",
-        session.peer.ip(),
-        rtp_port,
-        args.seconds
-    ));
-
+    let manager = core::Manager::new(&cli.iface);
     let profile = media::Profile {
         width: args.width,
         height: args.height,
@@ -421,43 +332,21 @@ fn cast(cli: &Cli, args: &CastArgs) -> Result<()> {
         audio_device: args.audio_device.clone(),
         test_pattern: args.test_pattern,
     };
-    let sink = media::Sink::Udp {
-        host: session.peer.ip().to_string(),
-        port: rtp_port,
+    let options = cast::Options {
+        port: args.port,
+        wait: args.wait,
+        seconds: args.seconds,
+        group: args.group,
+        freq: args.freq,
     };
-    let built = media::build(&profile, &sink)?;
-
-    let bus = built.pipeline.bus().expect("the pipeline has a bus");
-    if let Err(e) = built.pipeline.set_state(gstreamer::State::Playing) {
-        // The bus carries the reason, and a bare "failed to change its
-        // state" tells nobody anything.
-        let mut detail = String::new();
-        while let Some(message) = bus.timed_pop(gstreamer::ClockTime::ZERO) {
-            if let gstreamer::MessageView::Error(err) = message.view() {
-                detail = format!("{err}\n{}", err.debug().unwrap_or_default());
-                break;
-            }
+    let mut log = |line: &str| {
+        if cli.json {
+            println!("{}", serde_json::json!({ "event": line }));
+        } else {
+            println!("{line}");
         }
-        built.pipeline.set_state(gstreamer::State::Null).ok();
-        anyhow::bail!("the pipeline would not start: {e}\n{detail}");
-    }
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(args.seconds as u64);
-    while std::time::Instant::now() < deadline {
-        if let Some(message) = bus.timed_pop(gstreamer::ClockTime::from_mseconds(200)) {
-            if let gstreamer::MessageView::Error(err) = message.view() {
-                built.pipeline.set_state(gstreamer::State::Null).ok();
-                anyhow::bail!(
-                    "pipeline error: {}\n{}",
-                    err.error(),
-                    err.debug().unwrap_or_default()
-                );
-            }
-        }
-    }
-    built.pipeline.set_state(gstreamer::State::Null).ok();
-    println!("stream finished");
-    Ok(())
+    };
+    cast::run(&manager, &profile, &options, &mut log)
 }
 
 /// Decode a WFD information element, under both candidate bit layouts.
@@ -869,7 +758,7 @@ fn media_test(cli: &Cli, args: &MediaTestArgs) -> Result<()> {
 fn doctor(cli: &Cli, mut radio: Radio) -> Result<()> {
     let status = radio.status()?;
     let work = radio.radio_work()?;
-    let wedge = radio.wedge(WEDGE_THRESHOLD)?;
+    let wedge = radio.wedge(radio::WEDGE_THRESHOLD)?;
     let wfd = radio.wfd_ie()?;
 
     if cli.json {
@@ -1037,72 +926,94 @@ fn recover(cli: &Cli, mut radio: Radio) -> Result<()> {
     Ok(())
 }
 
-fn discover(cli: &Cli, mut radio: Radio, args: &DiscoverArgs) -> Result<()> {
-    // 1. Advertise ourselves before scanning. Without a WFD element in the
-    //    probe requests, a strict sink may never answer.
-    let ie = wfd::source_ie(DEFAULT_CONTROL_PORT, 200);
-    radio.set_wfd_ie(&ie)?;
-
-    // 2. A wedged queue makes every search fail instantly.
-    if let Some(wedge) = radio.wedge(WEDGE_THRESHOLD)? {
-        eprintln!("warning: {}", wedge.explanation);
-        if args.recover {
-            eprintln!("recovering: flushing the radio-work queue");
-            let recovery = radio.recover()?;
-            eprintln!(
-                "recovered: {} -> {} work items, station {}",
-                recovery.work_items_before,
-                recovery.work_items_after,
-                if recovery.station_connected {
-                    "reconnected"
-                } else {
-                    "not reconnected"
-                }
-            );
-            radio.set_wfd_ie(&ie)?;
+fn discover(cli: &Cli, manager: &core::Manager, args: &DiscoverArgs) -> Result<()> {
+    // The whole search runs with the radio, and the manager records what
+    // it found so that the D-Bus API can report the same list.
+    let peers = match manager.with_radio(|radio| -> Result<Vec<Peer>> {
+        // 1. Advertise ourselves before scanning. Without a WFD element in
+        //    the probe requests, a strict sink may never answer.
+        let ie = wfd::source_ie(DEFAULT_CONTROL_PORT, 200);
+        if let Err(e) = radio.set_wfd_ie(&ie) {
+            return Err(e.into());
         }
-    }
 
-    // 3. Search.
-    radio.p2p_find(args.duration)?;
-    let deadline = Instant::now() + Duration::from_secs(args.duration as u64 + 5);
-    let mut peers: BTreeMap<String, Peer> = BTreeMap::new();
-
-    while Instant::now() < deadline {
-        match radio.supplicant().poll_event(Duration::from_millis(500)) {
-            Ok(Some(line)) => {
-                if let Some(peer) = Peer::parse_event(&line) {
-                    peers.entry(peer.p2p_device_address.clone()).or_insert(peer);
+        // 2. A wedged queue makes every search fail instantly.
+        let wedge = radio.wedge(radio::WEDGE_THRESHOLD)?;
+        if let Some(wedge) = wedge {
+            eprintln!("warning: {}", wedge.explanation);
+            if args.recover {
+                eprintln!("recovering: flushing the radio-work queue");
+                let recovery = radio.recover()?;
+                eprintln!(
+                    "recovered: {} -> {} work items, station {}",
+                    recovery.work_items_before,
+                    recovery.work_items_after,
+                    if recovery.station_connected {
+                        "reconnected"
+                    } else {
+                        "not reconnected"
+                    }
+                );
+                if let Err(e) = radio.set_wfd_ie(&ie) {
+                    return Err(e.into());
                 }
             }
-            Ok(None) => {}
-            Err(e) => {
-                eprintln!("warning: control connection: {e}");
-                break;
-            }
         }
-    }
-    radio.p2p_stop_find()?;
 
-    // 4. Fill in details for peers we only saw as events.
-    let addresses: Vec<String> = radio.p2p_peers()?;
-    for address in addresses {
-        if let Ok(details) = radio.p2p_peer(&address) {
-            if let Some(peer) = peers.get_mut(&address) {
-                peer.merge_fields(&details);
+        // 3. Search.
+        if let Err(e) = radio.p2p_find(args.duration) {
+            return Err(e.into());
+        }
+        let deadline = Instant::now() + Duration::from_secs(args.duration as u64 + 5);
+        let mut peers: BTreeMap<String, Peer> = BTreeMap::new();
+
+        while Instant::now() < deadline {
+            match radio.supplicant().poll_event(Duration::from_millis(500)) {
+                Ok(Some(line)) => {
+                    if let Some(peer) = Peer::parse_event(&line) {
+                        peers.entry(peer.p2p_device_address.clone()).or_insert(peer);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("warning: control connection: {e}");
+                    break;
+                }
             }
         }
-    }
+        if let Err(e) = radio.p2p_stop_find() {
+            return Err(e.into());
+        }
+
+        // 4. Fill in details for peers we only saw as events.
+        let addresses = radio.p2p_peers()?;
+        for address in addresses {
+            if let Ok(details) = radio.p2p_peer(&address) {
+                if let Some(peer) = peers.get_mut(&address) {
+                    peer.merge_fields(&details);
+                }
+            }
+        }
+        Ok(peers.values().cloned().collect::<Vec<Peer>>())
+    }) {
+        Some(result) => result?,
+        None => anyhow::bail!("the radio is not available"),
+    };
+
+    let devices: Vec<core::Device> = peers.iter().map(core::Device::from_peer).collect();
+    manager.set_devices(devices);
 
     if cli.json {
-        let list: Vec<&Peer> = peers.values().collect();
+        let list: Vec<&Peer> = peers.iter().collect();
         println!("{}", serde_json::to_string_pretty(&list)?);
         return Ok(());
     }
 
     if peers.is_empty() {
         println!("no peers found in {}s", args.duration);
-        let wedge = radio.wedge(WEDGE_THRESHOLD)?;
+        let wedge = manager
+            .with_radio(|radio| radio.wedge(radio::WEDGE_THRESHOLD))
+            .and_then(|result| result.ok().flatten());
         if let Some(w) = wedge {
             println!("  radio: WEDGED — {}", w.explanation);
         } else {
@@ -1118,7 +1029,7 @@ fn discover(cli: &Cli, mut radio: Radio, args: &DiscoverArgs) -> Result<()> {
     }
 
     println!("{} peer(s) found in {}s\n", peers.len(), args.duration);
-    for peer in peers.values() {
+    for peer in &peers {
         println!("  {}", peer.p2p_device_address);
         if let Some(name) = &peer.name {
             println!("    name        : {name}");
@@ -1143,10 +1054,6 @@ fn discover(cli: &Cli, mut radio: Radio, args: &DiscoverArgs) -> Result<()> {
             }
             None => println!("    wfd role    : (no WFD information element advertised)"),
         }
-        if !peer.is_wfd() {
-            println!("    note        : this peer is not a Wi-Fi Display device");
-        }
-        {}
         if args.verbose {
             println!("    raw         : {}", peer.raw);
         }

@@ -60,7 +60,9 @@ pub const RTP_PAYLOAD_TYPE: i32 = 33;
 pub const RTP_MTU: u32 = 1400;
 
 /// The H.264 encoder to use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, serde::Serialize, serde::Deserialize,
+)]
 pub enum Encoder {
     /// Pick the best available encoder.
     Auto,
@@ -77,7 +79,7 @@ pub enum Encoder {
 const ENCODER_PREFERENCE: &[Encoder] = &[Encoder::Vaapi, Encoder::X264, Encoder::OpenH264];
 
 /// A capture and encode profile.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Profile {
     pub width: i32,
     pub height: i32,
