@@ -64,7 +64,7 @@ struct Ui {
     commander: Commander,
     banner: adw::Banner,
     device_stack: gtk::Stack,
-    empty: adw::StatusPage,
+    empty_reason: gtk::Label,
     device_list: gtk::ListBox,
     session_group: adw::PreferencesGroup,
     session_list: gtk::ListBox,
@@ -96,11 +96,29 @@ impl Ui {
 
         // The empty state says *why* there is nothing to cast to, so the
         // description is filled in from the diagnostics.
-        let empty = adw::StatusPage::builder()
-            .icon_name("video-display-symbolic")
-            .title("No sinks yet")
-            .description("Looking for Miracast sinks.")
-            .build();
+        //
+        // It is built from plain widgets rather than an AdwStatusPage: a
+        // status page wants the whole window, and this one has to sit in
+        // a group with the diagnostics below it.
+        let empty_title = gtk::Label::new(Some("No sinks yet"));
+        empty_title.add_css_class("title-2");
+        let empty_reason = gtk::Label::new(Some("Looking for Miracast sinks."));
+        empty_reason.set_wrap(true);
+        empty_reason.set_justify(gtk::Justification::Center);
+        empty_reason.add_css_class("dim-label");
+
+        let empty = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        empty.set_halign(gtk::Align::Center);
+        empty.set_valign(gtk::Align::Center);
+        empty.set_margin_top(24);
+        empty.set_margin_bottom(24);
+        empty.set_margin_start(12);
+        empty.set_margin_end(12);
+        let icon = gtk::Image::from_icon_name("video-display-symbolic");
+        icon.set_pixel_size(48);
+        empty.append(&icon);
+        empty.append(&empty_title);
+        empty.append(&empty_reason);
 
         let device_stack = gtk::Stack::new();
         device_stack.add_named(&device_list, Some("list"));
@@ -171,7 +189,7 @@ impl Ui {
             commander,
             banner,
             device_stack,
-            empty,
+            empty_reason,
             device_list,
             session_group,
             session_list,
@@ -349,7 +367,7 @@ impl Ui {
                             .to_string(),
                     },
                 };
-                self.empty.set_description(Some(&reason));
+                self.empty_reason.set_text(&reason);
             }
         }
 
@@ -460,15 +478,14 @@ mod tests {
     use super::*;
 
     /// The empty state has to be able to say *why* there is nothing to
-    /// cast to, so the description has to change.
+    /// cast to, so the reason has to change.
     #[test]
-    fn the_status_page_description_changes() {
+    fn the_empty_state_changes_its_reason() {
         gtk4::init().expect("gtk has to initialise");
-        let page = libadwaita::StatusPage::new();
-        page.set_description(Some("the first reason"));
-        assert_eq!(page.description().as_deref(), Some("the first reason"));
-        page.set_description(Some("the second reason"));
-        assert_eq!(page.description().as_deref(), Some("the second reason"));
+        let label = gtk4::Label::new(Some("the first reason"));
+        assert_eq!(label.text().as_str(), "the first reason");
+        label.set_text("the second reason");
+        assert_eq!(label.text().as_str(), "the second reason");
     }
 
     /// A sentence the daemon wrote starts in the middle of a thought.
