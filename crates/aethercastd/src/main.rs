@@ -1000,8 +1000,8 @@ fn discover(cli: &Cli, manager: &core::Manager, args: &DiscoverArgs) -> Result<(
         None => anyhow::bail!("the radio is not available"),
     };
 
-    let devices: Vec<core::Device> = peers.iter().map(core::Device::from_peer).collect();
-    manager.set_devices(devices);
+    let devices: Vec<core::Device> = peers.iter().map(core::device_from_peer).collect();
+    manager.replace_devices(devices);
 
     if cli.json {
         let list: Vec<&Peer> = peers.iter().collect();

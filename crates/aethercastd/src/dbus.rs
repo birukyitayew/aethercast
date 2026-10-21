@@ -11,17 +11,9 @@
 //! Structured data is returned as JSON, so the interface can grow without
 //! breaking the clients that came before it.
 
-use crate::core::SharedManager;
+use aethercast_api::{BUS_NAME, CONTRACT, INTERFACE, OBJECT_PATH};
 
-/// The bus name the daemon owns.
-pub const BUS_NAME: &str = "io.github.birukyitayew.aethercast";
-/// The object path the manager is served at.
-pub const OBJECT_PATH: &str = "/io/github/birukyitayew/aethercast";
-/// The interface name.
-pub const INTERFACE: &str = "io.github.birukyitayew.aethercast.Manager";
-/// The contract, for the drift test.
-pub const CONTRACT: &str =
-    include_str!("../../../dbus/io.github.birukyitayew.aethercast.Manager.xml");
+use crate::core::SharedManager;
 
 /// The object served on the bus.
 pub struct ManagerInterface(pub SharedManager);
@@ -134,36 +126,30 @@ pub async fn serve(manager: SharedManager) -> anyhow::Result<()> {
     }
 
     let connection = zbus::Connection::session().await?;
+    manager.set_bus(connection.clone());
     connection
         .object_server()
-        .at(OBJECT_PATH, ManagerInterface(manager))
+        .at(OBJECT_PATH, ManagerInterface(manager.clone()))
         .await?;
     connection.request_name(BUS_NAME).await?;
+
+    // The daemon watches for sinks in the background, so that a client is
+    // told when one appears rather than having to poll.
+    let watcher = manager.clone();
+    std::thread::spawn(move || loop {
+        watcher.search(10);
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    });
     println!("serving {INTERFACE} as {BUS_NAME} at {OBJECT_PATH}");
     // The connection has to stay alive for the service to be reachable.
     std::future::pending::<()>().await;
     Ok(())
 }
 
-/// A client for the API, used by the tests and by the client application.
-#[zbus::proxy(
-    interface = "io.github.birukyitayew.aethercast.Manager",
-    default_service = "io.github.birukyitayew.aethercast",
-    default_path = "/io/github/birukyitayew/aethercast"
-)]
-pub trait ManagerApi {
-    fn version(&self) -> zbus::Result<String>;
-    fn list_devices(&self) -> zbus::Result<String>;
-    fn list_sessions(&self) -> zbus::Result<String>;
-    fn get_diagnostics(&self) -> zbus::Result<String>;
-    fn arm_wfd_element(&self, element: String) -> zbus::Result<String>;
-    fn start_cast(&self, device: String, profile: String) -> zbus::Result<String>;
-    fn stop_cast(&self, session: String) -> zbus::Result<bool>;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aethercast_api::ManagerApiProxy;
 
     /// The method names in the published contract.
     fn contract_methods() -> Vec<String> {
@@ -187,26 +173,76 @@ mod tests {
             CONTRACT.contains(INTERFACE),
             "the contract does not name the interface the daemon serves"
         );
-        assert!(contract.contains(&"ListDevices".to_string()));
-        assert!(contract.contains(&"StartCast".to_string()));
-        assert!(contract.contains(&"GetDiagnostics".to_string()));
-        // Every method in the contract is implemented, and the
-        // implementation has nothing the contract does not mention.
-        let implemented = [
-            "Version",
-            "ListDevices",
-            "ListSessions",
-            "GetDiagnostics",
-            "ArmWfdElement",
-            "StartCast",
-            "StopCast",
-        ];
-        for method in implemented {
+        // Every method the contract publishes is implemented here, and
+        // nothing is implemented that the contract does not mention.
+        for method in aethercast_api::CONTRACT_METHODS {
             assert!(
                 contract.contains(&method.to_string()),
                 "{method} is implemented but not in the contract"
             );
         }
+        for signal in aethercast_api::CONTRACT_SIGNALS {
+            assert!(
+                CONTRACT.contains(signal),
+                "{signal} is implemented but not in the contract"
+            );
+        }
+    }
+
+    /// A bus name that no other test uses.
+    ///
+    /// The tests run at the same time, and a bus name belongs to one
+    /// connection at a time.
+    fn unique_name(tag: &str) -> String {
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // A D-Bus name element may not start with a digit.
+        format!("io.github.birukyitayew.aethercast.test.{tag}.n{n}")
+    }
+
+    #[tokio::test]
+    async fn a_client_is_told_when_a_device_appears() {
+        let Ok(connection) = zbus::Connection::session().await else {
+            eprintln!("no session bus: skipping");
+            return;
+        };
+        let manager = std::sync::Arc::new(crate::core::Manager::new("wlan0"));
+        manager.set_bus(connection.clone());
+        connection
+            .object_server()
+            .at(OBJECT_PATH, ManagerInterface(manager.clone()))
+            .await
+            .unwrap();
+        let name = unique_name("signals");
+        connection.request_name(name.as_str()).await.unwrap();
+
+        let proxy = ManagerApiProxy::builder(&connection)
+            .destination(name.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let mut signals = proxy.receive_device_found().await.unwrap();
+
+        // Announcing a device must reach the client.
+        let device = crate::core::Device {
+            id: "aa:bb:cc:dd:ee:ff".into(),
+            name: Some("Test Sink".into()),
+            kind: "miracast-sink".into(),
+            address: None,
+            wfd: None,
+        };
+        manager.announce_device(&device);
+
+        let received = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            use futures_util::StreamExt;
+            signals.next().await
+        })
+        .await
+        .expect("the signal did not arrive")
+        .expect("the signal stream ended");
+        let args = received.args().unwrap();
+        assert!(args.device.contains("Test Sink"), "{}", args.device);
     }
 
     #[tokio::test]
@@ -222,9 +258,15 @@ mod tests {
             .at(OBJECT_PATH, ManagerInterface(manager))
             .await
             .unwrap();
-        connection.request_name(BUS_NAME).await.unwrap();
+        let name = unique_name("api");
+        connection.request_name(name.as_str()).await.unwrap();
 
-        let proxy = ManagerApiProxy::new(&connection).await.unwrap();
+        let proxy = ManagerApiProxy::builder(&connection)
+            .destination(name.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
         assert!(!proxy.version().await.unwrap().is_empty());
         assert_eq!(proxy.list_devices().await.unwrap(), "[]");
         assert_eq!(proxy.list_sessions().await.unwrap(), "[]");

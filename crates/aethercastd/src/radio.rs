@@ -16,6 +16,8 @@
 
 use std::time::{Duration, Instant};
 
+use aethercast_api::StationStatus;
+
 use crate::supplicant::Supplicant;
 use crate::wfd::WfdIe;
 
@@ -74,16 +76,6 @@ impl RadioWork {
             age_secs,
         })
     }
-}
-
-/// Station association state.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub struct StationStatus {
-    pub ssid: Option<String>,
-    pub bssid: Option<String>,
-    pub freq: Option<u32>,
-    pub wpa_state: Option<String>,
-    pub connected: bool,
 }
 
 /// What a recovery pass did.

@@ -1,0 +1,19 @@
+[package]
+name = "aethercast-api"
+description = "The AetherCast API: the published contract, the data types, and the client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# The command line needs a value parser for the encoder. The client does
+# not, so the dependency stays optional.
+cli = ["dep:clap"]
+
+[dependencies]
+clap = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+zbus = "4.4.0"

@@ -38,9 +38,23 @@ The collision is recorded as an **accepted risk** with an explicit rename trigge
 | Display name | AetherCast | Final |
 | Daemon binary | `aethercastd` | Final |
 | D-Bus namespace | `io.github.birukyitayew.aethercast` | Provisional — rebased on the owned domain when one is registered |
+| Client application ID | `io.github.birukyitayew.aethercast.Client` | Provisional — same |
 | Flathub ID | `io.github.birukyitayew.aethercast` | Provisional — same |
 | Config directory | `~/.config/aethercast` | Final |
 | Domain | *pending* | Must be registered before the first public release |
+
+### Why the client has its own application ID
+
+The daemon owns the bus name `io.github.birukyitayew.aethercast` and
+serves the API at the object path `/io/github/birukyitayew/aethercast`.
+A GApplication derives its own object path from its application ID, so a
+client whose ID was the same string would try to export at the very path
+the daemon already owns. Two things cannot own one name, and the client
+fails to start with a registration error that says nothing about the
+cause.
+
+The client therefore uses `io.github.birukyitayew.aethercast.Client`, and
+the daemon keeps the plain name — the name a client library looks up.
 
 ### Accepted risk and mitigation
 

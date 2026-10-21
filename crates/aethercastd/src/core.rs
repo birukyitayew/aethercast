@@ -7,72 +7,36 @@
 
 use std::sync::{Arc, Mutex};
 
+use aethercast_api::{Diagnostics, Session, StationStatus, INTERFACE, OBJECT_PATH};
+
+// The types the API publishes are the daemon's types too.
+pub use aethercast_api::Device;
+
 use crate::discovery::Peer;
-use crate::radio::{Radio, StationStatus};
+use crate::radio::Radio;
 use crate::wfd::{self, WfdIe};
 
-/// A sink or source we know about.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct Device {
-    /// A stable identifier: the P2P device address.
-    pub id: String,
-    /// The name the peer advertised, if any.
-    pub name: Option<String>,
-    /// What the peer is: a Miracast sink, a Chromecast device, and so on.
-    pub kind: String,
-    /// The peer's infrastructure address.
-    pub address: Option<String>,
-    /// The WFD information the peer advertised.
-    pub wfd: Option<serde_json::Value>,
-}
-
-impl Device {
-    /// Build a device from a discovered peer.
-    pub fn from_peer(peer: &Peer) -> Self {
-        let wfd = peer.wfd_dev_info.as_ref().map(|info| {
-            serde_json::json!({
-                "device_type": format!("{}", info.device.device_type),
-                "session_available": info.device.session_available,
-                "control_port": info.control_port,
-                "max_throughput_mbps": info.max_throughput_mbps,
-            })
-        });
-        Self {
-            id: peer.p2p_device_address.clone(),
-            name: peer.name.clone(),
-            kind: if peer.is_wfd() {
-                "miracast-sink".to_string()
-            } else {
-                "wifi-direct-peer".to_string()
-            },
-            address: peer.device_address.clone(),
-            wfd,
-        }
+/// Build a device from a discovered peer.
+pub fn device_from_peer(peer: &Peer) -> Device {
+    let wfd = peer.wfd_dev_info.as_ref().map(|info| {
+        serde_json::json!({
+            "device_type": format!("{}", info.device.device_type),
+            "session_available": info.device.session_available,
+            "control_port": info.control_port,
+            "max_throughput_mbps": info.max_throughput_mbps,
+        })
+    });
+    Device {
+        id: peer.p2p_device_address.clone(),
+        name: peer.name.clone(),
+        kind: if peer.is_wfd() {
+            "miracast-sink".to_string()
+        } else {
+            "wifi-direct-peer".to_string()
+        },
+        address: peer.device_address.clone(),
+        wfd,
     }
-}
-
-/// The state of a casting session.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct Session {
-    pub id: String,
-    pub device: String,
-    /// One of: connecting, playing, stopped, failed.
-    pub state: String,
-    pub detail: Option<String>,
-}
-
-/// A snapshot of everything the daemon knows about its environment.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct Diagnostics {
-    pub interface: String,
-    pub station: StationStatus,
-    pub radio_work_items: usize,
-    pub radio_healthy: bool,
-    /// Set when the radio-work queue is wedged, with the reason.
-    pub wedge: Option<String>,
-    pub adapter: serde_json::Value,
-    /// The global WFD information element, in hex.
-    pub wfd_element: Option<String>,
 }
 
 /// The shared state and operations.
@@ -82,6 +46,8 @@ pub struct Manager {
     devices: Mutex<Vec<Device>>,
     sessions: Mutex<Vec<Session>>,
     next_session: Mutex<u64>,
+    /// The bus connection, so that the daemon can emit signals.
+    bus: Mutex<Option<zbus::Connection>>,
 }
 
 impl Manager {
@@ -93,6 +59,100 @@ impl Manager {
             devices: Mutex::new(Vec::new()),
             sessions: Mutex::new(Vec::new()),
             next_session: Mutex::new(1),
+            bus: Mutex::new(None),
+        }
+    }
+
+    /// Remember the bus connection, so that signals can be emitted.
+    pub fn set_bus(&self, connection: zbus::Connection) {
+        *self.bus.lock().unwrap() = Some(connection);
+    }
+
+    /// Emit a signal on the bus.
+    ///
+    /// The body is a single string, which is how the rest of the API
+    /// carries structured data.
+    pub fn emit_signal(&self, member: &str, body: &str) -> bool {
+        let guard = self.bus.lock().unwrap();
+        let Some(connection) = guard.as_ref() else {
+            return false;
+        };
+        let message = zbus::Message::signal(OBJECT_PATH, INTERFACE, member)
+            .and_then(|builder| builder.build(&body.to_string()));
+        match message {
+            Ok(message) => {
+                let connection = connection.clone();
+                // The bus is asynchronous, and a failure to notify is not
+                // worth failing the daemon over.
+                tokio::spawn(async move {
+                    let _ = connection.send(&message).await;
+                });
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Search for peers, and announce the ones we have not seen before.
+    ///
+    /// This is what the daemon runs in the background, so that a client is
+    /// told when a sink appears instead of polling for it.
+    pub fn search(&self, duration: u32) -> Vec<Device> {
+        let peers = self
+            .with_radio(|radio| {
+                // A sink that filters on the WFD element will not answer
+                // without one.
+                let ie = wfd::source_ie(crate::rtsp::DEFAULT_CONTROL_PORT, 200);
+                let _ = radio.set_wfd_ie(&ie);
+
+                let _ = radio.p2p_find(duration);
+                let deadline =
+                    std::time::Instant::now() + std::time::Duration::from_secs(duration as u64 + 5);
+                let mut peers: std::collections::BTreeMap<String, Peer> =
+                    std::collections::BTreeMap::new();
+                while std::time::Instant::now() < deadline {
+                    if let Ok(Some(line)) = radio
+                        .supplicant()
+                        .poll_event(std::time::Duration::from_millis(500))
+                    {
+                        if let Some(peer) = Peer::parse_event(&line) {
+                            peers.entry(peer.p2p_device_address.clone()).or_insert(peer);
+                        }
+                    }
+                }
+                let _ = radio.p2p_stop_find();
+
+                // Fill in the details of the peers we only saw as events.
+                if let Ok(addresses) = radio.p2p_peers() {
+                    for address in addresses {
+                        if let Ok(details) = radio.p2p_peer(&address) {
+                            if let Some(peer) = peers.get_mut(&address) {
+                                peer.merge_fields(&details);
+                            }
+                        }
+                    }
+                }
+                peers.into_values().collect::<Vec<Peer>>()
+            })
+            .unwrap_or_default();
+
+        let devices: Vec<Device> = peers.iter().map(device_from_peer).collect();
+        for device in &devices {
+            self.announce_device(device);
+        }
+        devices
+    }
+
+    /// Announce a device, if it is new.
+    pub fn announce_device(&self, device: &Device) {
+        let mut devices = self.devices.lock().unwrap();
+        if devices.iter().any(|d| d.id == device.id) {
+            return;
+        }
+        devices.push(device.clone());
+        drop(devices);
+        if let Ok(json) = serde_json::to_string(device) {
+            self.emit_signal("DeviceFound", &json);
         }
     }
 
@@ -129,14 +189,14 @@ impl Manager {
         }
     }
 
+    /// Replace the device list, without announcing anything.
+    pub fn replace_devices(&self, devices: Vec<Device>) {
+        *self.devices.lock().unwrap() = devices;
+    }
+
     /// The devices we know about.
     pub fn devices(&self) -> Vec<Device> {
         self.devices.lock().unwrap().clone()
-    }
-
-    /// Remember a set of discovered devices, replacing the previous list.
-    pub fn set_devices(&self, devices: Vec<Device>) {
-        *self.devices.lock().unwrap() = devices;
     }
 
     /// The sessions we know about.

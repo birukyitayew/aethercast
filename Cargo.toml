@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/aethercastd"]
+members = ["crates/aethercast-api", "crates/aethercastd", "crates/aethercast-client"]
 resolver = "2"
 
 [workspace.package]

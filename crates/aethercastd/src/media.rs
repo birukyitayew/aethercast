@@ -59,68 +59,13 @@ pub const RTP_PAYLOAD_TYPE: i32 = 33;
 /// RTP MTU: seven TS packets plus headers.
 pub const RTP_MTU: u32 = 1400;
 
-/// The H.264 encoder to use.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, serde::Serialize, serde::Deserialize,
-)]
-pub enum Encoder {
-    /// Pick the best available encoder.
-    Auto,
-    /// VA-API, through `vah264enc` or the legacy `vaapih264enc`.
-    Vaapi,
-    /// x264 — the only software encoder measured fast enough for 720p30.
-    X264,
-    /// OpenH264 — Cisco's encoder, present in every distribution.
-    OpenH264,
-}
+// The profile is part of the API, so that the client and the daemon agree
+// on what a cast looks like.
+pub use aethercast_api::{Encoder, Profile};
 
 /// Preference order: hardware first, then the software encoder that was
 /// measured at 2.64x realtime for 720p30.
 const ENCODER_PREFERENCE: &[Encoder] = &[Encoder::Vaapi, Encoder::X264, Encoder::OpenH264];
-
-/// A capture and encode profile.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Profile {
-    pub width: i32,
-    pub height: i32,
-    pub framerate: i32,
-    /// Bitrate in bits per second.
-    pub bitrate_bps: u32,
-    pub encoder: Encoder,
-    /// Capture the system audio mix as well.
-    pub audio: bool,
-    /// Use a generated test pattern instead of capturing the screen.
-    ///
-    /// This is what makes the pipeline testable on a machine with no
-    /// display, such as a build server.
-    pub test_pattern: bool,
-    /// The PulseAudio source to capture. The system mix is the *monitor* of
-    /// the default sink, for example
-    /// `alsa_output.pci-0000_00_1f.3.analog-stereo.monitor`.
-    pub audio_device: String,
-}
-
-impl Default for Profile {
-    fn default() -> Self {
-        // 640x480p30 is the profile the reference machine can actually
-        // sustain: OpenH264 was measured at 0.32-0.81x realtime for 720p30
-        // on this CPU, which pushed the PCR gap to 133 ms, past the 100 ms
-        // the specification allows. 640x480 is also the format WFD
-        // mandates as a minimum, so nothing is given up.
-        Self {
-            width: 640,
-            height: 480,
-            // Zero means "keep the capture rate".
-            framerate: 0,
-            // 2 Mbit/s is comfortable for 720p30 on a 2.4 GHz link.
-            bitrate_bps: 2_000_000,
-            encoder: Encoder::Auto,
-            audio: false,
-            audio_device: "default".to_string(),
-            test_pattern: false,
-        }
-    }
-}
 
 /// Where the pipeline sends its media.
 #[derive(Debug, Clone)]
