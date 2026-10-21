@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=AetherCast
+GenericName=Screen Casting
+Comment=Cast this computer's screen to a TV or a projector
+Exec=aethercast
+Icon=io.github.birukyitayew.aethercast.Client
+Terminal=false
+Categories=AudioVideo;Video;Player;Network;
+Keywords=Miracast;Wi-Fi Display;Cast;Screen;Mirror;TV;
+StartupNotify=true

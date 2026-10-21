@@ -119,6 +119,56 @@ Signals are the next part of the API: a client has to be told when a
 device appears and when a session changes state rather than polling for
 it, and the client is what needs them.
 
+### The three crates
+
+| Crate | What it is |
+| --- | --- |
+| `aethercast-api` | the contract: the names, the data types, the client proxy, and the published XML |
+| `aethercastd` | the daemon: the radio, the discovery, the media, and the D-Bus service |
+| `aethercast-client` | the window: GTK4 and libadwaita, on top of the API |
+
+The API lives in its own crate so that the daemon and the client cannot
+drift apart: both use the same definitions, the same proxy, and the same
+contract file. The client never links the daemon, and the daemon never
+links the client.
+
+## The client
+
+The client is a GTK4 and libadwaita application. It shows three things:
+
+- **the sinks the machine can see**, each with a Cast button;
+- **the sessions that are running**;
+- **the diagnostics**: the adapter's bands and limits, the radio's
+  health, the station, and the WFD element.
+
+The part that matters is what happens when there is nothing to cast to.
+The empty state does not say "no devices found" and stop there — it says
+*why*:
+
+> No sink is advertising on a band this adapter can hear.
+> This adapter is 2.4 GHz only (2400-2500 MHz), so a sink that
+> advertises on 5 GHz cannot be seen.
+
+That sentence is the difference between AetherCast and a list of empty
+results. It comes straight from the daemon's diagnostics, over the bus,
+in the same JSON the API publishes.
+
+### How the client is put together
+
+The window never blocks on the bus. A worker thread holds the connection
+and sends what it learns over a channel; the window picks it up on a
+200 ms timer, and the user's commands travel back the same way. The
+interface cannot freeze because the daemon is slow or gone, and the
+banner offers to start the daemon when it is not there.
+
+### The application ID
+
+The client uses `io.github.birukyitayew.aethercast.Client`, and the
+daemon keeps `io.github.birukyitayew.aethercast`. They cannot be the
+same string: a GApplication derives its object path from its own ID, and
+the daemon already serves the API at that path. The reason is recorded
+in [ADR-0004](adr/0004-name-aethercast.md).
+
 ## The reference sink
 
 `spike/18-reference-sink.py` is the project's oracle. It plays the sink

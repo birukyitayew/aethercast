@@ -42,14 +42,26 @@ jobs:
             gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly ffmpeg \
             tshark
 
+      - name: Install the GTK4 development packages
+        # The client is a GTK4 and libadwaita application.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev libadwaita-1-dev xvfb
+
       - name: Build
         run: cargo build --release
 
       - name: Test
-        run: cargo test --all
+        # The client's tests need a display, and they have their own step.
+        run: cargo test --workspace --exclude aethercast-client
+
+      - name: Test the client
+        # A headless build server has no display, so one is made.
+        run: xvfb-run -a cargo test --workspace -p aethercast-client
 
       - name: Test the D-Bus API on a real session bus
-        run: dbus-run-session -- cargo test --all the_api_answers_on_the_session_bus
+        run: dbus-run-session -- cargo test -p aethercastd the_api_answers_on_the_session_bus
 
       - name: Lint
         run: |

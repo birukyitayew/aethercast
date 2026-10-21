@@ -277,6 +277,82 @@ we cannot offer it.
 
 ---
 
+## 2026-10-21 — Milestone 8: the client
+
+The window is a GTK4 and libadwaita application, and it sits on the API
+the last milestone published. Nothing was duplicated to make that
+possible: the contract, the data types, and the client proxy moved into
+their own crate, `aethercast-api`, and both the daemon and the client
+use them. The client never links the daemon, and the daemon never links
+the client, so the two cannot drift apart.
+
+| Crate | What it is |
+| --- | --- |
+| `aethercast-api` | the contract: the names, the data types, the client proxy, the published XML |
+| `aethercastd` | the daemon: the radio, the discovery, the media, the D-Bus service |
+| `aethercast-client` | the window: GTK4 and libadwaita, on top of the API |
+
+### What the window shows
+
+- the sinks the machine can see, each with a **Cast** button;
+- the sessions that are running;
+- the diagnostics: the adapter's bands and limits, the radio's health,
+  the station, and the WFD element.
+
+### The part that matters
+
+When there is nothing to cast to, the empty state does not say "no
+devices found" and stop there. It says why:
+
+> No sink is advertising on a band this adapter can hear.
+> This adapter is 2.4 GHz only (2400-2500 MHz), so a sink that
+> advertises on 5 GHz cannot be seen.
+
+That sentence is the difference between AetherCast and a list of empty
+results. It comes straight from the daemon's diagnostics, over the bus,
+in the same JSON the API publishes — no extra work, no second code path,
+and it is right about *this* machine.
+
+### Two things that were harder than they looked
+
+**The application ID cannot be the daemon's bus name.** A GApplication
+derives its object path from its own ID, and the daemon already serves
+the API at `/io/github/birukyitayew/aethercast`. A client with the same
+ID tries to export at the same path, and fails to start with
+
+```
+Failed to register: GDBus.Error:org.freedesktop.DBus.Error.UnknownInterface:
+Unknown interface 'org.gtk.Actions'
+```
+
+which says nothing about the cause. The client therefore uses
+`io.github.birukyitayew.aethercast.Client`, and the daemon keeps the
+plain name — the name a client library looks up. Recorded in ADR-0004.
+
+**An AdwApplicationWindow has a content of its own.** `gtk_window_set_child`
+on one is a fatal error (`Adwaita-ERROR: gtk_window_set_child() is not
+supported for AdwApplicationWindow`), and the window exits with SIGABRT
+before it is ever drawn.
+
+### The window never blocks on the bus
+
+A worker thread holds the connection, subscribes to the signals, and
+sends what it learns over a channel; the window picks it up on a 200 ms
+timer, and the user's commands travel back the same way. The interface
+cannot freeze because the daemon is slow or gone, and the banner offers
+to start the daemon when it is not there.
+
+### Verified
+
+The client runs on the reference machine, against the real daemon, on the
+real session bus, and says the sentence above. The screenshot in
+`docs/images/client.png` is that window.
+
+The client's tests run in CI under `xvfb-run`, because a build server has
+no display.
+
+---
+
 ## 2026-10-21 — Milestone 7: the D-Bus API
 
 The GUI needs a contract to sit on, so the contract came first.
