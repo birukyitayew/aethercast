@@ -277,6 +277,59 @@ we cannot offer it.
 
 ---
 
+## 2026-10-21 — Milestone 7: the D-Bus API
+
+The GUI needs a contract to sit on, so the contract came first.
+
+The daemon now serves `io.github.birukyitayew.aethercast.Manager` on the
+session bus, and the contract is published as
+`dbus/io.github.birukyitayew.aethercast.Manager.xml`. A test compares
+the method names in the contract with the ones the implementation
+serves, and the daemon **refuses to start** if the contract does not
+describe the interface it serves: a contract that has drifted is worse
+than no contract at all.
+
+| Method | What it does |
+| --- | --- |
+| `Version` | the interface version |
+| `ListDevices` | the sinks we know about, as JSON |
+| `ListSessions` | the casting sessions, as JSON |
+| `GetDiagnostics` | a snapshot of the environment, as JSON |
+| `ArmWfdElement` | advertise a WFD information element, as hex |
+| `StartCast` | cast to a device, and return a session identifier |
+| `StopCast` | stop a session |
+
+Structured data travels as **JSON**, so the interface can grow without
+breaking the clients that came before it.
+
+The command line and the bus sit on the same `core::Manager`, and the
+cast itself moved into its own module, so both front ends run exactly
+the same code and cannot disagree about what the daemon is doing.
+
+Verified from outside the process:
+
+```
+  $ gdbus call --session --dest io.github.birukyitayew.aethercast \
+      --object-path /io/github/birukyitayew/aethercast \
+      --method io.github.birukyitayew.aethercast.Manager.GetDiagnostics
+  {"interface":"wlan0",
+   "station":{"ssid":"Biruk","wpa_state":"COMPLETED","connected":true},
+   "radio_work_items":0,"radio_healthy":true,
+   "adapter":{"bands":"2.4 GHz",
+              "limitation":"this adapter is 2.4 GHz only (2400-2500 MHz),
+                           so a sink that advertises on 5 GHz cannot be seen"},
+   "wfd_element":"00000610101c4400c8"}
+```
+
+**That response is the product.** A user of the future client will see
+*why* nothing was found, not an empty list — which is the difference
+between GNOME Network Displays and AetherCast.
+
+**Signals are next**, with the client: a client has to be told when a
+device appears and when a session changes state, rather than polling.
+
+---
+
 ## 2026-10-21 — Milestone 6: a cast over the Wi-Fi Direct group interface
 
 The last untested line in the product is now tested. With the group
