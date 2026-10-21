@@ -2,7 +2,7 @@
 
 > A best-in-class open-source casting app for Linux — starting with Miracast.
 
-**Status: Research phase.** No product code yet. We are documenting the protocols, the Linux stack, the hardware limits, and the UX before committing to an architecture.
+**Status: a working daemon, a published API, and a GTK4 client.**
 
 ## Why
 
@@ -29,17 +29,29 @@ GNOME Network Displays proved that Linux screen casting is possible, but it is s
 4. **Fail visibly.** A user should always know what failed, why, and what to try next.
 5. **Accessible by default.** Keyboard navigation, screen-reader labels, high contrast, and translated strings.
 
-## Status
+## The three crates
 
-**Research phase complete. Milestone 1 in code.**
+| Crate | What it is |
+| --- | --- |
+| [`aethercast-api`](crates/aethercast-api/) | the contract: the D-Bus names, the data types, the client proxy, and the published XML |
+| [`aethercastd`](crates/aethercastd/) | the session daemon: the radio, the discovery, the media pipeline, and the D-Bus service |
+| [`aethercast-client`](crates/aethercast-client/) | the GTK4 and libadwaita window, on top of the API |
+
+The daemon and the client share the API crate, so they cannot drift apart:
+the client never links the daemon, and the daemon never links the client.
+
+## Status
 
 - Five cited research notes, ~30,000 words, 393 sources — [`docs/research/`](docs/research/)
 - Four ADRs: research-first scope, Rust + GStreamer architecture, GPL-3.0-or-later, the name decision — [`docs/adr/`](docs/adr/)
 - A reproducible root cause for "GNOME Network Displays finds no sinks" — [`spike/01-radio-work-wedge-report.md`](spike/01-radio-work-wedge-report.md)
-- `aethercastd`, the session daemon: radio health, the global WFD information element, and Wi-Fi Direct discovery — [`crates/aethercastd/`](crates/aethercastd/)
-- The WFD RTSP handshake, M1 through M7, with the sink's capabilities parsed — testable without hardware against a mock sink
+- `aethercastd`, the session daemon: radio health, the global WFD information element, Wi-Fi Direct discovery, the WFD RTSP handshake (M1–M7), and a specification-conformant media pipeline
 - A media pipeline that conforms to the Wi-Fi Display specification — video PID `0x1011`, audio PID `0x1100`, RTP payload type 33, seven TS packets per datagram, PCR within 100 ms — checked by [`spike/04-media-conformance.sh`](spike/04-media-conformance.sh)
 - **An end-to-end cast**: a source that screens, encodes, muxes and streams to a sink over RTP, with the stream validated by ffprobe — [`spike/19-end-to-end.sh`](spike/19-end-to-end.sh)
+- **A published D-Bus API**, with the contract in [`dbus/`](dbus/) and a test that refuses to let it drift from the implementation
+- **A GTK4 client**, which says *why* nothing was found instead of showing an empty list
+
+![The AetherCast client, explaining that the adapter cannot hear the band the sink advertises on](docs/images/client.png)
 
 ```console
 $ cargo run -p aethercastd -- doctor
@@ -53,19 +65,48 @@ wfd element      : armed
   device type     : source  session available: true  TDLS preferred: false
 ```
 
-Not yet implemented: P2P group formation to a real sink, and the GUI.
+Not yet proven: a cast to a **physical** Miracast sink. Every link of the
+chain is proven — discovery, the RTSP handshake, the media pipeline, the
+group interface — but the machine this was built on has a 2.4 GHz-only
+adapter and no sink that advertises itself. See
+[`docs/compatibility.md`](docs/compatibility.md).
+
+## Building
+
+The daemon needs GStreamer; the client needs GTK4 and libadwaita.
+
+```console
+$ sudo apt install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+      libgtk-4-dev libadwaita-1-dev
+$ cargo build --release
+```
+
+Run the daemon, then the client:
+
+```console
+$ ./target/release/aethercastd daemon     # serves the API on the session bus
+$ ./target/release/aethercast              # the window
+```
+
+The daemon also works on its own:
+
+```console
+$ ./target/release/aethercastd discover    # search for sinks
+$ ./target/release/aethercastd cast        # wait for a sink and stream to it
+```
 
 ## Documentation
 
 - [`docs/README.md`](docs/README.md) — documentation index
 - [`docs/research/`](docs/research/) — cited protocol and platform research
 - [`docs/adr/`](docs/adr/) — architecture decision records
+- [`docs/architecture.md`](docs/architecture.md) — how the pieces fit together
 - [`docs/protocols/`](docs/protocols/) — sequence diagrams and packet flows
 - [`JOURNAL.md`](JOURNAL.md) — the day-by-day build journal
 
 ## License
 
-To be decided after the licensing and code-reuse research. If we reuse GPL-3.0 code from GNOME Network Displays, the project must be GPL-3.0.
+GPL-3.0-or-later — see [`LICENSE`](LICENSE) and [ADR-0003](docs/adr/0003-license-gpl3.md).
 
 ## Not affiliated with GNOME
 
