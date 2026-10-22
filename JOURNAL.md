@@ -4,6 +4,94 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-22 — Taking stock on a machine with no radio
+
+**Environment.** This pass was made on a VPS (Ubuntu 26.04, 2 vCPU) with no
+wireless adapter: `ip -br link` shows only `lo`, `enp39s0` (Amazon ENA
+ethernet) and `docker0`, and `iw` finds no phy. Anything that needs
+`wpa_supplicant`, P2P, or a real sink is untestable here. Those checks are
+collected in [`docs/pc-test-checklist.md`](docs/pc-test-checklist.md) for the
+maintainer's PC. Everything below was actually run here; nothing is assumed.
+
+**Architecture, as built.**
+
+| Crate | Responsibility |
+| --- | --- |
+| `aethercast-api` | the contract: bus names, `Device`/`Session`/`Diagnostics`, the zbus proxy, and the published XML |
+| `aethercastd` | the session daemon: radio health, WFD IE, discovery, P2P, RTSP M1–M7, media pipeline, CLI, D-Bus service |
+| `aethercast-client` | a GTK4/libadwaita window that talks only to the API crate |
+
+Inside `aethercastd`, `main.rs` is the CLI and command dispatch; `core.rs` is
+the shared `Manager` (devices, sessions, diagnostics, signals) that both the
+CLI and the bus sit on; `radio.rs` and `supplicant.rs` own the datagram
+control interface to `wpa_supplicant`; `discovery.rs` and `p2p.rs` turn
+supplicant events into typed peers and groups; `wfd.rs` encodes and decodes
+the WFD information element; `rtsp.rs` is the sink-facing handshake;
+`media.rs` builds the GStreamer pipeline; `cast.rs` joins handshake and
+pipeline; `dbus.rs` serves the API. The client uses a worker thread and a
+channel so the window never blocks on the bus.
+
+**What is proven on this machine.** `cargo build --release`, `cargo fmt
+--check`, and `cargo clippy --all-targets -- -D warnings` all pass.
+`spike/19-end-to-end.sh` completes the whole M1–M7 handshake against the
+reference sink and delivers a stream ffprobe accepts (2052 RTP packets, PT
+33). `spike/04-media-conformance.sh` passes every check (video PID 0x1011,
+PT 33, 1336-byte datagrams, largest PCR gap 33 ms). Client tests pass under
+`xvfb-run`; the API test passes under `dbus-run-session`.
+
+**What failed here, and why.** `supplicant::tests::reports_a_missing_socket`
+fails on this host with `EACCES`: `/run/wpa_supplicant` exists with mode
+`750 root:netdev`, and the test user is not in `netdev`, so connecting to a
+missing socket returns permission denied rather than not-found. CI passes
+because its runner has no `/run/wpa_supplicant`. The error is also what a
+real unprivileged daemon would show, and "Permission denied (os error 13)"
+is exactly the kind of message this project promises not to ship.
+
+**Open issues found in this pass.**
+
+| # | Issue | Severity | Needs radio? |
+| --- | --- | --- | --- |
+| 1 | `StartCast` records the device name but the cast ignores it: `cast::run` always waits for *a* sink and never targets the named one | high | yes (to finish) |
+| 2 | `StopCast` only deletes the session record; the pipeline and its thread keep running | high | no |
+| 3 | `SessionStateChanged` is published in the contract and subscribed to by the client, but the daemon never emits it | high | no |
+| 4 | `EACCES` on the control socket is reported as a generic I/O error | medium | no |
+| 5 | The supplicant protocol layer has one test (a missing socket), so request/reply framing, interleaved events, `FAIL`, and timeouts are unverified | medium | no |
+| 6 | The PCR PID is not `0x1000` (issue #13) | medium | no |
+| 7 | `aethercastd recover --json` prints human-readable lines before the JSON document | low | no |
+| 8 | `media test --udp --json` reports a `file` that was never written | low | no |
+| 9 | `docs/architecture.md` still says signals and the client are "next" | low | no |
+| 10 | Issues #9, #10, #11 describe milestones that are now implemented | housekeeping | no |
+| 11 | A cast to a physical sink, 720p, and HDCP are still unproven | known limit | yes |
+
+**Plan for this pass.**
+
+1. `fix/supplicant-permission-error` — map `EACCES` to an actionable
+   `SocketDenied` error and relax the test to accept either errno.
+2. `test/supplicant-control-protocol` — make the control client testable
+   against a fake socket, then test framing, interleaved events, `FAIL`,
+   empty replies, and timeouts. This is the layer every radio feature stands
+   on and it can be verified without hardware.
+3. `feat/session-state-signals` — emit `SessionStateChanged` whenever a
+   session changes, and test it on a real session bus. The API should not
+   promise a signal it does not send.
+4. `docs/status-and-pc-checklist` — refresh `architecture.md`, add
+   `docs/pc-test-checklist.md`, close the completed milestone issues, and
+   leave this journal and a handoff accurate.
+
+**Why this order.** The first item was requested and is the smallest. The
+second turns the first into a regression test and covers the riskiest
+unverified layer. The third makes the published contract true and is fully
+testable here. Documentation and housekeeping come last so they describe
+what actually landed. `StartCast`/`StopCast` are left as issues: targeting a
+named sink is a protocol feature (the source has to connect to the sink's
+RTSP port) and cannot be finished or verified without a real sink.
+
+**Result of the pass.** See the entries below, and
+[`docs/pc-test-checklist.md`](docs/pc-test-checklist.md) for what still has
+to happen on hardware.
+
+---
+
 ## 2026-10-20 — Day 0: Research phase begins
 
 **Goal:** build a better open-source Linux casting app, starting with Miracast source support.
