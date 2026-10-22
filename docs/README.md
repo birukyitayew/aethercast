@@ -11,6 +11,8 @@ AetherCast is in the research phase. This directory is the single source of trut
 | `adr/` | Architecture Decision Records (one decision per file) |
 | `architecture.md` | System architecture, once the research is synthesized |
 | `compatibility.md` | Hardware, TV, dongle, and driver compatibility matrix |
+| `pc-test-checklist.md` | The ordered checks that need a radio, a sink, or a display |
+| `local-pc-session-prompt.md` | The handoff prompt for the machine that has the radio |
 | `roadmap.md` | Milestones, acceptance criteria, and risks |
 
 ## Research tracks
