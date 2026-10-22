@@ -16,7 +16,7 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 **Verification on this machine.** `cargo fmt --check` and `cargo clippy
 --all-targets -- -D warnings` are clean. `cargo test -p aethercastd` is 46
-passed (37 before this pass), the two signal tests pass under
+passed (34 before this pass, one of them failing on this host), the two signal tests pass under
 `dbus-run-session`, and the client tests pass under `xvfb-run`. Both media
 spikes still pass: the reference sink receives 2052 RTP packets at payload
 type 33, and the conformance check measures a 33 ms PCR gap.
