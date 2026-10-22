@@ -4,6 +4,58 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-22 — The supplicant gets a test bench, and the API keeps its promise
+
+**Merged on `main`**
+
+| PR | What it did |
+| --- | --- |
+| #15 | `EACCES` on the control socket is now an actionable error that names the owning group and the command to join it; tests accept either errno |
+| #16 | `connect_to(path)` plus a fake `wpa_supplicant` datagram socket: eight tests for framing, documents, `FAIL`, `UNKNOWN COMMAND`, empty replies, interleaved events, and timeouts |
+| #17 | `SessionStateChanged` is actually emitted by `update_session`, and a session-bus test proves the client receives it |
+
+**Verification on this machine.** `cargo fmt --check` and `cargo clippy
+--all-targets -- -D warnings` are clean. `cargo test -p aethercastd` is 46
+passed (37 before this pass), the two signal tests pass under
+`dbus-run-session`, and the client tests pass under `xvfb-run`. Both media
+spikes still pass: the reference sink receives 2052 RTP packets at payload
+type 33, and the conformance check measures a 33 ms PCR gap.
+
+**CI caveat.** The pull-request CI runs for #15 and #16 hung for more than
+26 minutes in the `apt-get install` step — before compiling any code — and
+were cancelled. The merges were made on the local gate the repository
+requires (fmt, clippy, tests), not on a green CI run. If a later run fails,
+check the runner's package installation first; the diff is not the suspect.
+
+**Privacy redaction.** This repository is public, and earlier entries
+contained the home SSID, BSSIDs, and private addresses from real captures.
+They are replaced with documentation placeholders (`home-net`,
+`02:00:00:00:00:0x`, `192.0.2.x`). No finding, number, or conclusion
+changed.
+
+**Issues.** Filed #18 (`StartCast` does not target the device it is given),
+#19 (`StopCast` leaves the cast running), and #20 (two CLI `--json` outputs
+that are not machine-readable). Closed #6 (the sink question is answered),
+#9, #10, and #11 (milestones 2–4 are implemented and proven). Open: #7
+(name clearance), #12 (physical sink), #13 (PCR PID), and the three above.
+
+**Handoff.**
+
+- **Done:** the supplicant error path and its protocol tests; session
+  signals; `docs/pc-test-checklist.md`; `docs/protocols/wfd-sink-observed.md`;
+  refreshed architecture and roadmap; issue housekeeping.
+- **Left, no hardware needed:** #19 (stop cancellation) and #20 (JSON
+  output), plus the PCR PID decision in #13. None are started; the next
+  session can pick them up without re-reading the code.
+- **On your PC:** work through `docs/pc-test-checklist.md` in order. Items
+  1–3 (doctor, arm, discover) settle whether the radio path is healthy.
+  Item 4–6 are the first cast to a physical sink; item 9 answers whether
+  this machine can sustain 720p. Record results in
+  `docs/compatibility.md`, and mark any PR that depends on them **needs
+  hardware test**.
+
+---
+
 ## 2026-10-22 — Taking stock on a machine with no radio
 
 **Environment.** This pass was made on a VPS (Ubuntu 26.04, 2 vCPU) with no
@@ -106,8 +158,8 @@ to happen on hardware.
 **Environment**
 - Kali Linux 2026.2, XFCE, X11.
 - Qualcomm Atheros QCA9565 / AR9565 (`ath9k`), 2.4 GHz, single radio.
-- Connected to `Biruk` on channel 1; P2P device `p2p-dev-wlan0`.
-- TV: AltoBeam-based Miracast sink, likely `192.168.1.2` / `.8`, currently not discovered by GNOME Network Displays.
+- Connected to `home-net` on channel 1; P2P device `p2p-dev-wlan0`.
+- TV: AltoBeam-based Miracast sink, likely `192.0.2.10` / `.8`, currently not discovered by GNOME Network Displays.
 - PipeWire 1.6.6; GStreamer has `ximagesrc`, `openh264enc`, `avenc_aac`, `mpegtsmux`, `rtpmp2tpay`; missing `x264enc` and `pipewiresrc`.
 - GNOME Network Displays 0.99.0 source checked out at `/tmp/opencode/gnd-src` (tag `0.99.0`).
 
@@ -145,7 +197,7 @@ The corrected monitor sweep (channels 1/6/11, with a positive control)
 finally produced a usable capture, and it changed the picture completely.
 
 **On channel 1, the sink sent six probe requests** from
-`dc:29:19:7f:46:5e` — its own MAC. Our earlier captures missed them
+`02:00:00:00:00:01` — its own MAC. Our earlier captures missed them
 because the channel 6 and 11 captures were broken (zero frames, not even
 the known `Nebyu` network), and because the vendor service tears its
 Wi-Fi Direct listen down whenever its Wi-Fi association changes.
@@ -154,10 +206,10 @@ Wi-Fi Direct listen down whenever its Wi-Fi association changes.
 source would recognise:**
 
 ```
-dc:29:19:7f:46:5e subtype=4 ie=0  len=0  data=              (SSID, wildcard)
-dc:29:19:7f:46:5e subtype=4 ie=1  len=8  data=82848b960c121824  (supported rates)
-dc:29:19:7f:46:5e subtype=4 ie=50 len=4  data=3048606c         (extended rates)
-dc:29:19:7f:46:5e subtype=4 ie=45 len=26 data=721102ff...     (HT capabilities)
+02:00:00:00:00:01 subtype=4 ie=0  len=0  data=              (SSID, wildcard)
+02:00:00:00:00:01 subtype=4 ie=1  len=8  data=82848b960c121824  (supported rates)
+02:00:00:00:00:01 subtype=4 ie=50 len=4  data=3048606c         (extended rates)
+02:00:00:00:00:01 subtype=4 ie=45 len=26 data=721102ff...     (HT capabilities)
 ```
 
 **No P2P information element. No WFD information element. No vendor
@@ -254,7 +306,7 @@ the project so far, and it is mostly negative — which is progress.
 | | Channel 1 | Channel 6 | Channel 11 |
 | --- | --- | --- | --- |
 | Frames | 3,222 | 0 | 0 |
-| Beacons | 185 (the `Biruk` AP) | 0 | 0 |
+| Beacons | 185 (the `home-net` AP) | 0 | 0 |
 | WFD information elements | none | none | none |
 | P2P information elements | none | none | none |
 | Probe requests | none | none | none |
@@ -477,7 +529,7 @@ Verified from outside the process:
       --object-path /io/github/birukyitayew/aethercast \
       --method io.github.birukyitayew.aethercast.Manager.GetDiagnostics
   {"interface":"wlan0",
-   "station":{"ssid":"Biruk","wpa_state":"COMPLETED","connected":true},
+   "station":{"ssid":"home-net","wpa_state":"COMPLETED","connected":true},
    "radio_work_items":0,"radio_healthy":true,
    "adapter":{"bands":"2.4 GHz",
               "limitation":"this adapter is 2.4 GHz only (2400-2500 MHz),
@@ -503,7 +555,7 @@ sink connecting to that address:
 ```
   the group is up on p2p-wlan0-4 (192.168.43.1)
   a sink must join the group and connect to 192.168.43.1:7236
-  sink connected from 192.168.1.1:41848
+  sink connected from 192.0.2.1:41848
   -> M1 OPTIONS (Require: org.wfa.wfd1.0)
   ...
   <- M7 PLAY
@@ -597,7 +649,7 @@ sink connects over the LAN instead, which is the only difference.
 `aethercastd p2p group` asks `wpa_supplicant` to become a Group Owner on its own. It works — the interface `p2p-wlan0-0` appears with `type P2P-GO` — and then the group is **removed again within milliseconds**, because an autonomous group with no client attached has no reason to exist. The supplicant's log says it plainly:
 
 ```
-P2P-GROUP-STARTED p2p-wlan0-3 GO ssid="DIRECT-I1" freq=2412 go_dev_addr=f8:da:0c:0c:c0:11
+P2P-GROUP-STARTED p2p-wlan0-3 GO ssid="DIRECT-I1" freq=2412 go_dev_addr=02:00:00:00:00:03
 p2p-wlan0-3: interface state ENABLED->DISABLED
 AP-DISABLED
 CTRL-EVENT-DISCONNECTED reason=3 locally_generated=1
@@ -646,8 +698,8 @@ The second RTP port is read the way the specification defines it — a second RT
 | Question | Answer | How |
 | --- | --- | --- |
 | Is this machine on Ethernet? | **No** — it has no Ethernet interface at all, only `wlan0` | `ip -br link` |
-| Where is the sink? | `192.168.1.2` and `.8`, AltoBeam MAC `dc:29:19:7f:46:5e`, **REACHABLE** | neighbour table sweep |
-| Is the network 5 GHz? | **No** — the `Biruk` AP is channel 1 (2412 MHz) and there is no 5 GHz network anywhere | `nmcli dev wifi list` |
+| Where is the sink? | `192.0.2.10` and `.8`, AltoBeam MAC `02:00:00:00:00:01`, **REACHABLE** | neighbour table sweep |
+| Is the network 5 GHz? | **No** — the `home-net` AP is channel 1 (2412 MHz) and there is no 5 GHz network anywhere | `nmcli dev wifi list` |
 | Can the adapter see 5 GHz? | **No** — `iw phy phy0 info` shows Band 1 only | `iw phy` |
 | Does the sink advertise mDNS services? | **No** — `_display._tcp`, `_googlecast._tcp`, `_airplay._tcp` are all empty, and no casting port is open | `avahi-browse -rt` |
 | Did the sink leave the AP earlier? | **Yes** — the AltoBeam device disappeared entirely while the sink was in Miracast mode, which is exactly what entering Wi-Fi Direct does | neighbour table, before and after |
@@ -743,7 +795,7 @@ The first real AetherCast code: a Rust daemon with a CLI, 14 unit tests, and a c
 ```
 $ aethercastd doctor
 interface        : wlan0
-station          : Biruk (2c:b6:c2:ed:c7:d3)  [connected]
+station          : home-net (02:00:00:00:00:02)  [connected]
 channel          : 2412 MHz
 radio-work queue : 0 item(s)
 radio health     : ok

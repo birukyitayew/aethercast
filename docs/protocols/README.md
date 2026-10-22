@@ -6,6 +6,7 @@ This directory holds the protocol-level documentation that the implementation wi
 
 | Note | Protocol | Status |
 | --- | --- | --- |
+| [`wfd-sink-observed.md`](wfd-sink-observed.md) | One real WFD sink, observed: what it speaks and why it cannot be found | Observed 2026-10-21 |
 | `wfd-rtsp.md` | Miracast/WFD RTSP M1–M7 | Research |
 | `wfd-media.md` | WFD RTP/MPEG-TS, codecs, A/V sync | Research |
 | `wfd-p2p.md` | Wi-Fi Direct discovery and group formation | Research |

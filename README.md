@@ -56,7 +56,7 @@ the client never links the daemon, and the daemon never links the client.
 ```console
 $ cargo run -p aethercastd -- doctor
 interface        : wlan0
-station          : Biruk (2c:b6:c2:ed:c7:d3)  [connected]
+station          : home-net (02:00:00:00:00:02)  [connected]
 channel          : 2412 MHz
 radio-work queue : 0 item(s)
 radio health     : ok
@@ -68,8 +68,10 @@ wfd element      : armed
 Not yet proven: a cast to a **physical** Miracast sink. Every link of the
 chain is proven — discovery, the RTSP handshake, the media pipeline, the
 group interface — but the machine this was built on has a 2.4 GHz-only
-adapter and no sink that advertises itself. See
-[`docs/compatibility.md`](docs/compatibility.md).
+adapter and no sink that advertises itself. The hardware run book is
+[`docs/pc-test-checklist.md`](docs/pc-test-checklist.md), and
+[`docs/compatibility.md`](docs/compatibility.md) records what is known
+about real devices.
 
 ## Building
 
@@ -101,6 +103,7 @@ $ ./target/release/aethercastd cast        # wait for a sink and stream to it
 - [`docs/research/`](docs/research/) — cited protocol and platform research
 - [`docs/adr/`](docs/adr/) — architecture decision records
 - [`docs/architecture.md`](docs/architecture.md) — how the pieces fit together
+- [`docs/pc-test-checklist.md`](docs/pc-test-checklist.md) — what to run on a machine with a radio and a sink
 - [`docs/protocols/`](docs/protocols/) — sequence diagrams and packet flows
 - [`JOURNAL.md`](JOURNAL.md) — the day-by-day build journal
 
