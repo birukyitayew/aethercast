@@ -4,6 +4,87 @@ A running record of decisions, experiments, dead ends, and lessons. Newest entri
 
 ---
 
+## 2026-10-22 — Discovery was deaf: four bugs on the control interface
+
+**Context.** Checklist item 3 (discovery) reported no peers while the TV was in
+screen-share mode. Item 4 (group formation) then produced `P2P-GROUP-STARTED`
+in the `wpa_supplicant` journal — an event our parser could not have
+recognized, because it matched `P2P_EVENT_GROUP_STARTED`. That contradiction
+started a read of the supplicant's own source (`p2p_supplicant.c`,
+`src/p2p/p2p.c`, `ctrl_iface.c`) and turned up four independent defects on the
+control interface.
+
+**What was wrong.**
+
+1. **No `ATTACH`.** `wpa_supplicant` delivers unsolicited events only to
+   control connections that have sent `ATTACH` (what `wpa_ctrl_attach()`
+   does). We never sent it, so `P2P_FIND` returned `OK`, the radio searched,
+   and not one event reached the process.
+2. **Macro names instead of wire names.** `P2P_EVENT_DEVICE_FOUND`,
+   `P2P_EVENT_GROUP_STARTED` and the rest are C identifiers from
+   `wpa_ctrl.h`; the strings on the socket are `P2P-DEVICE-FOUND`,
+   `P2P-GROUP-STARTED`, and so on. Both `discovery.rs` and `p2p.rs` matched
+   the identifiers, which can never appear on the wire.
+3. **No peer-table fallback.** The event is a notification, not the peer
+   table. A peer whose event was missed (or arrived before the connection was
+   attached) never entered our list, even though `P2P_PEER FIRST` /
+   `P2P_PEER NEXT-<addr>` would have returned it.
+4. **A wrong model of `P2P_PEER`.** That document is line-oriented:
+   `device_name=Living Room TV` is unquoted (spaces included),
+   `listen_freq=` is the channel, and `wfd_subelems=` is the **whole WFD
+   subelement list**. The code parsed whitespace-delimited tokens, looked only
+   for `src_freq`, and read a `wfd_ies` field that does not exist. A peer
+   found through the table would have lost its name and its Miracast role.
+
+Errors were discarded too: `set_wfd_ie`, `p2p_find`, `p2p_stop_find` and
+`p2p_peers` all used `let _ =` or `unwrap_or_default()`, so a control-socket
+failure was reported as "no peers found".
+
+**What changed.**
+
+- `Supplicant::attach()`; `Radio::open` attaches before anything else, and
+  `poll_event` returns `NotAttached` rather than waiting silently.
+- The wire names in `discovery.rs` and `p2p.rs`, with a regression test that
+  the macro spelling is not an event.
+- `Manager::search_peers` is now the one search: arm the WFD element, start
+  the find, collect events until `P2P-FIND-STOPPED`, stop, enumerate the peer
+  table, insert a peer for every address and merge the details. The daemon
+  watcher and the CLI both call it; `search` wraps it and announces new
+  devices. Search errors propagate, and the watcher logs each distinct error
+  once instead of turning it into an empty list.
+- `merge_fields` is line-based, parses `wfd_subelems` as a subelement list
+  (the event's `wfd_dev_info` remains the body-only form), and maps
+  `listen_freq` with `oper_freq` as the fallback.
+- 12 new tests: `ATTACH` and `NotAttached`, both event spellings, the
+  line-oriented document with an unquoted name, subelement walking, a
+  truncated list, and the frequency fallback. `cargo test -p aethercastd` is
+  58 passed; `fmt --check` and `clippy --all-targets -- -D warnings` are
+  clean.
+
+**Live verification.** `discover --duration 10` returned in **10.09 s**. The
+loop breaks on `P2P-FIND-STOPPED`, which is only delivered to an attached
+connection, and the supplicant journal shows the two find-stopped events from
+the 10 s and 30 s runs. So the event path is now proven live, independently of
+whether a sink is present.
+
+**Still open.** The TV was not in screen-share mode for the re-run and the
+30 s search found no peer, so "the TV can be discovered now" is not yet
+proven; repeat item 3 with the TV in screen-share mode. The group path is
+unchanged: `P2P-GROUP-STARTED` is followed by `AP-DISABLED`, and
+NetworkManager logs "notified a group start but we are not trying to connect".
+Three stale `p2p-wlan0-*` interfaces remain and need `sudo iw dev … del`; they
+did not affect the find.
+
+**Docs correction.** `docs/protocols/wfd-sink-observed.md` claimed that "a
+device that advertises nothing cannot be found by any source, which is why
+Windows, Android, GNOME Network Displays, and AetherCast all fail to see it."
+That inference is withdrawn: at the time, our own discovery was deaf, so its
+failure was not evidence about the sink. The observation (no P2P/WFD element
+in that capture) stands; the conclusion does not. Spike 18 carries the same
+correction rather than being rewritten.
+
+---
+
 ## 2026-10-22 — The supplicant gets a test bench, and the API keeps its promise
 
 **Merged on `main`**

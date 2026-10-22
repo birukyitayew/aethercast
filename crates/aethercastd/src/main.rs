@@ -16,9 +16,6 @@ mod rtsp;
 mod supplicant;
 mod wfd;
 
-use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
-
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use gstreamer::prelude::*;
@@ -927,79 +924,39 @@ fn recover(cli: &Cli, mut radio: Radio) -> Result<()> {
 }
 
 fn discover(cli: &Cli, manager: &core::Manager, args: &DiscoverArgs) -> Result<()> {
-    // The whole search runs with the radio, and the manager records what
-    // it found so that the D-Bus API can report the same list.
-    let peers = match manager.with_radio(|radio| -> Result<Vec<Peer>> {
-        // 1. Advertise ourselves before scanning. Without a WFD element in
-        //    the probe requests, a strict sink may never answer.
-        let ie = wfd::source_ie(DEFAULT_CONTROL_PORT, 200);
-        if let Err(e) = radio.set_wfd_ie(&ie) {
-            return Err(e.into());
-        }
-
-        // 2. A wedged queue makes every search fail instantly.
-        let wedge = radio.wedge(radio::WEDGE_THRESHOLD)?;
-        if let Some(wedge) = wedge {
-            eprintln!("warning: {}", wedge.explanation);
-            if args.recover {
-                eprintln!("recovering: flushing the radio-work queue");
-                let recovery = radio.recover()?;
-                eprintln!(
-                    "recovered: {} -> {} work items, station {}",
-                    recovery.work_items_before,
-                    recovery.work_items_after,
-                    if recovery.station_connected {
-                        "reconnected"
-                    } else {
-                        "not reconnected"
-                    }
-                );
-                if let Err(e) = radio.set_wfd_ie(&ie) {
-                    return Err(e.into());
-                }
-            }
-        }
-
-        // 3. Search.
-        if let Err(e) = radio.p2p_find(args.duration) {
-            return Err(e.into());
-        }
-        let deadline = Instant::now() + Duration::from_secs(args.duration as u64 + 5);
-        let mut peers: BTreeMap<String, Peer> = BTreeMap::new();
-
-        while Instant::now() < deadline {
-            match radio.supplicant().poll_event(Duration::from_millis(500)) {
-                Ok(Some(line)) => {
-                    if let Some(peer) = Peer::parse_event(&line) {
-                        peers.entry(peer.p2p_device_address.clone()).or_insert(peer);
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    eprintln!("warning: control connection: {e}");
-                    break;
-                }
-            }
-        }
-        if let Err(e) = radio.p2p_stop_find() {
-            return Err(e.into());
-        }
-
-        // 4. Fill in details for peers we only saw as events.
-        let addresses = radio.p2p_peers()?;
-        for address in addresses {
-            if let Ok(details) = radio.p2p_peer(&address) {
-                if let Some(peer) = peers.get_mut(&address) {
-                    peer.merge_fields(&details);
-                }
-            }
-        }
-        Ok(peers.values().cloned().collect::<Vec<Peer>>())
-    }) {
+    // A wedged queue makes every search fail instantly, so it is worth
+    // telling the person before they wait out the search window.
+    let wedge = match manager.with_radio(|radio| radio.wedge(radio::WEDGE_THRESHOLD)) {
         Some(result) => result?,
         None => anyhow::bail!("the radio is not available"),
     };
+    if let Some(wedge) = wedge {
+        eprintln!("warning: {}", wedge.explanation);
+        if args.recover {
+            eprintln!("recovering: flushing the radio-work queue");
+            let recovery = match manager.with_radio(|radio| radio.recover()) {
+                Some(result) => result?,
+                None => anyhow::bail!("the radio is not available"),
+            };
+            eprintln!(
+                "recovered: {} -> {} work items, station {}",
+                recovery.work_items_before,
+                recovery.work_items_after,
+                if recovery.station_connected {
+                    "reconnected"
+                } else {
+                    "not reconnected"
+                }
+            );
+        }
+    }
 
+    // One search implementation, shared with the daemon's background
+    // search: the WFD element, the find, the events and the peer-table
+    // fallback all live in `Manager::search_peers`.
+    let peers = manager
+        .search_peers(args.duration)
+        .map_err(anyhow::Error::msg)?;
     let devices: Vec<core::Device> = peers.iter().map(core::device_from_peer).collect();
     manager.replace_devices(devices);
 
@@ -1055,7 +1012,7 @@ fn discover(cli: &Cli, manager: &core::Manager, args: &DiscoverArgs) -> Result<(
             None => println!("    wfd role    : (no WFD information element advertised)"),
         }
         if args.verbose {
-            println!("    raw         : {}", peer.raw);
+            println!("    raw         : {}", peer.raw.replace('\n', " | "));
         }
     }
     Ok(())

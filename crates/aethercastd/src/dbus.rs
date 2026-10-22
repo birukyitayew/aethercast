@@ -136,9 +136,21 @@ pub async fn serve(manager: SharedManager) -> anyhow::Result<()> {
     // The daemon watches for sinks in the background, so that a client is
     // told when one appears rather than having to poll.
     let watcher = manager.clone();
-    std::thread::spawn(move || loop {
-        watcher.search(10);
-        std::thread::sleep(std::time::Duration::from_secs(5));
+    std::thread::spawn(move || {
+        // Report a search failure once, not once every cycle: a machine with
+        // no adapter would otherwise fill the journal with the same line.
+        let mut last_error: Option<String> = None;
+        loop {
+            match watcher.search(10) {
+                Ok(_) => last_error = None,
+                Err(e) if last_error.as_deref() == Some(e.as_str()) => {}
+                Err(e) => {
+                    eprintln!("discovery: {e}");
+                    last_error = Some(e);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
     });
     println!("serving {INTERFACE} as {BUS_NAME} at {OBJECT_PATH}");
     // The connection has to stay alive for the service to be reachable.

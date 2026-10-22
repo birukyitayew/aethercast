@@ -5,12 +5,25 @@
 **Wireless:** ATBM chip, 2.4 GHz only, associated at 2412 MHz, 65 Mbps
 **Artifacts pulled (read-only):** `Miracast.apk`, `libhiwfd.so`, `libwfds.so`, `libhihal_miracast.so`, `ext.jar`, `tvservice.jar`, `cvte.media.jar`
 
+> **Correction (2026-10-22).** The conclusion that the sink "never
+> advertises" and that therefore "no standard source can find it" was
+> published before AetherCast's own discovery path was known to be broken:
+> the control connection never sent `ATTACH`, and the event parsers matched
+> the `wpa_ctrl.h` macro names (`P2P_EVENT_DEVICE_FOUND`) instead of the
+> strings on the wire (`P2P-DEVICE-FOUND`). The observation that no P2P/WFD
+> element appeared in the capture still stands; the inference about every
+> source does not. See
+> [`docs/protocols/wfd-sink-observed.md`](../docs/protocols/wfd-sink-observed.md)
+> and the 2026-10-22 journal entry. The rest of this report is left as
+> written: it is the record of what was observed at the time.
+
 ## The short version
 
 The sink speaks **standard** Wi-Fi Display. It is not a proprietary
 protocol, and it is not on 5 GHz. It is a **vendor implementation whose
 advertising never happens** — so no standard source can find it, which
-includes Windows, Android, GNOME Network Displays, and AetherCast.
+includes Windows, Android, GNOME Network Displays, and AetherCast. *(The
+last inference is withdrawn; see the correction above.)*
 
 ## What the vendor stack is
 

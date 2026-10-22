@@ -106,8 +106,12 @@ pub struct Radio {
 impl Radio {
     /// Open the control interface of `iface`.
     pub fn open(iface: &str) -> crate::supplicant::Result<Self> {
+        let mut sup = Supplicant::connect(iface)?;
+        // `P2P-DEVICE-FOUND` and the group events only arrive on an attached
+        // connection; without this the search runs and hears nothing.
+        sup.attach()?;
         Ok(Self {
-            sup: Supplicant::connect(iface)?,
+            sup,
             iface: iface.to_string(),
         })
     }
