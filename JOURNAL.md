@@ -23,9 +23,10 @@ type 33, and the conformance check measures a 33 ms PCR gap.
 
 **CI caveat.** The pull-request CI runs for #15 and #16 hung for more than
 26 minutes in the `apt-get install` step — before compiling any code — and
-were cancelled. The merges were made on the local gate the repository
-requires (fmt, clippy, tests), not on a green CI run. If a later run fails,
-check the runner's package installation first; the diff is not the suspect.
+were cancelled. Those merges were made on the local gate the repository
+requires (fmt, clippy, tests), not on a green CI run. The main-branch run
+for #16 and the pull-request run for #17 later passed in 2m29s and 5m49s,
+so the stall was the runner's package mirror, not the diff.
 
 **Privacy redaction.** This repository is public, and earlier entries
 contained the home SSID, BSSIDs, and private addresses from real captures.
