@@ -66,7 +66,15 @@ impl Drop for Supplicant {
 impl Supplicant {
     /// Connect to the control interface of `iface`.
     pub fn connect(iface: &str) -> Result<Self> {
-        let server = PathBuf::from(format!("/run/wpa_supplicant/{iface}"));
+        Self::connect_to(PathBuf::from(format!("/run/wpa_supplicant/{iface}")))
+    }
+
+    /// Connect to a control socket at an explicit path.
+    ///
+    /// `connect` uses this with the system path; the tests use it against a
+    /// fake control interface, so the protocol can be exercised without a
+    /// wireless adapter or root.
+    fn connect_to(server: PathBuf) -> Result<Self> {
         let local_path = temp_control_path();
 
         // `wpa_supplicant` replies to the address the request came from, so
@@ -98,7 +106,8 @@ impl Supplicant {
     ///
     /// * `OK` or `OK <text>` — the command succeeded,
     /// * `FAIL <reason>` — the command failed,
-    /// * `UNKNOWN COMMAND` — the control interface does not know the command,
+    /// * `UNKNOWN COMMAND` — the control interface does not know the command;
+    ///   reported as a command failure rather than as an empty reply,
     /// * raw text — for the commands that return a document instead of a
     ///   status (`STATUS`, `WFD_SUBELEM_GET`, `RADIO_WORK show`, `P2P_PEER`).
     ///
@@ -116,6 +125,15 @@ impl Supplicant {
                 return Err(Error::CommandFailed {
                     cmd: cmd.to_string(),
                     reason: rest.trim().to_string(),
+                });
+            }
+            // `UNKNOWN COMMAND` is an error the control interface reports as
+            // text rather than as `FAIL`; treating it as a successful empty
+            // reply hides a command the installed supplicant does not have.
+            if line.starts_with("UNKNOWN COMMAND") {
+                return Err(Error::CommandFailed {
+                    cmd: cmd.to_string(),
+                    reason: "the control interface does not know this command".to_string(),
                 });
             }
             if line.starts_with('<') {
@@ -245,5 +263,176 @@ mod tests {
             std::io::Error::from(ErrorKind::ConnectionRefused),
         );
         assert!(matches!(error, Error::Io(_)));
+    }
+
+    /// A fake `wpa_supplicant` control interface.
+    ///
+    /// The real one is a datagram socket at `/run/wpa_supplicant/<iface>`
+    /// that replies to the address the request came from. A local socket
+    /// pair behaves the same way, so the protocol can be tested without a
+    /// radio, root, or the real daemon.
+    struct Fake {
+        socket: UnixDatagram,
+        path: PathBuf,
+    }
+
+    impl Fake {
+        fn start() -> Self {
+            static FAKE_SEQ: AtomicU64 = AtomicU64::new(0);
+            let seq = FAKE_SEQ.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "aethercast-fake-supplicant-{}-{seq}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&path);
+            let socket = UnixDatagram::bind(&path).expect("the fake control socket has to bind");
+            Self { socket, path }
+        }
+
+        fn connect(&self) -> Supplicant {
+            Supplicant::connect_to(self.path.clone()).expect("the client has to connect")
+        }
+
+        fn receive(&self, expected: &str) -> PathBuf {
+            self.socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut buf = [0u8; 4096];
+            let (n, from) = self
+                .socket
+                .recv_from(&mut buf)
+                .expect("the request has to arrive");
+            assert_eq!(std::str::from_utf8(&buf[..n]).unwrap(), expected);
+            from.as_pathname()
+                .expect("the client has a named socket")
+                .to_path_buf()
+        }
+
+        fn reply(&self, to: &std::path::Path, text: &str) {
+            self.socket
+                .send_to(text.as_bytes(), to)
+                .expect("the reply has to be sent");
+        }
+    }
+
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    #[test]
+    fn a_command_is_sent_verbatim_without_a_newline() {
+        let fake = Fake::start();
+        let mut client = fake.connect();
+        let server = std::thread::spawn(move || {
+            let to = fake.receive("WFD_SUBELEM_SET all 00010c4400c8");
+            fake.reply(&to, "OK\n");
+        });
+        assert_eq!(
+            client.request("WFD_SUBELEM_SET all 00010c4400c8").unwrap(),
+            ""
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn the_text_after_ok_is_the_reply() {
+        let fake = Fake::start();
+        let mut client = fake.connect();
+        let server = std::thread::spawn(move || {
+            let to = fake.receive("PING");
+            fake.reply(&to, "OK pong\r\n");
+        });
+        assert_eq!(client.request("PING").unwrap(), "pong");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_document_reply_is_returned_verbatim() {
+        let fake = Fake::start();
+        let mut client = fake.connect();
+        let server = std::thread::spawn(move || {
+            let to = fake.receive("STATUS");
+            fake.reply(&to, "wpa_state=COMPLETED\nfreq=2412\nssid=test\n");
+        });
+        assert_eq!(
+            client.request("STATUS").unwrap(),
+            "wpa_state=COMPLETED\nfreq=2412\nssid=test"
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_fail_reply_becomes_a_command_error() {
+        let fake = Fake::start();
+        let mut client = fake.connect();
+        let server = std::thread::spawn(move || {
+            let to = fake.receive("P2P_FIND 30");
+            fake.reply(&to, "FAIL busy\n");
+        });
+        match client.request("P2P_FIND 30") {
+            Err(Error::CommandFailed { cmd, reason }) => {
+                assert_eq!(cmd, "P2P_FIND 30");
+                assert_eq!(reason, "busy");
+            }
+            other => panic!("expected a command failure, got {other:?}"),
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn an_unknown_command_is_an_error_not_an_empty_reply() {
+        let fake = Fake::start();
+        let mut client = fake.connect();
+        let server = std::thread::spawn(move || {
+            let to = fake.receive("WFD_SUBELEM_GET all");
+            fake.reply(&to, "UNKNOWN COMMAND\n");
+        });
+        match client.request("WFD_SUBELEM_GET all") {
+            Err(Error::CommandFailed { reason, .. }) => {
+                assert!(reason.contains("does not know"), "{reason}");
+            }
+            other => panic!("expected a command failure, got {other:?}"),
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn an_empty_reply_is_a_successful_empty_document() {
+        let fake = Fake::start();
+        let mut client = fake.connect();
+        let server = std::thread::spawn(move || {
+            let to = fake.receive("RADIO_WORK show");
+            fake.reply(&to, "");
+        });
+        assert_eq!(client.request("RADIO_WORK show").unwrap(), "");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn an_event_arriving_before_the_reply_is_kept_for_the_caller() {
+        let fake = Fake::start();
+        let mut client = fake.connect();
+        let server = std::thread::spawn(move || {
+            let to = fake.receive("RADIO_WORK show");
+            // An unsolicited event can arrive between the request and the
+            // reply; it must not be mistaken for the reply.
+            fake.reply(&to, "<2>CTRL-EVENT-SCAN-STARTED\n");
+            fake.reply(&to, "OK\n");
+        });
+        assert_eq!(client.request("RADIO_WORK show").unwrap(), "");
+        assert_eq!(
+            client.poll_event(Duration::from_millis(100)).unwrap(),
+            Some("<2>CTRL-EVENT-SCAN-STARTED".to_string())
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn polling_for_an_event_times_out_without_one() {
+        let fake = Fake::start();
+        let mut client = fake.connect();
+        assert_eq!(client.poll_event(Duration::from_millis(50)).unwrap(), None);
     }
 }
