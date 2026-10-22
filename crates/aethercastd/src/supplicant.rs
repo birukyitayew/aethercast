@@ -12,12 +12,18 @@
 //! Datagram sockets preserve message boundaries, so no line buffering is
 //! needed: one `recv` is one message.
 //!
+//! Events are delivered **only** to connections that have sent `ATTACH`
+//! (what `wpa_ctrl_attach()` does). A connection that skips it receives
+//! replies and nothing else, which looks exactly like a search that finds
+//! no peers.
+//!
 //! The socket lives at `/run/wpa_supplicant/<iface>` and is group-writable for
 //! members of `netdev`, so the whole daemon can run unprivileged. On a
 //! hardened system the directory is `0750 root:netdev`, and a user who is not
 //! in that group gets `EACCES` even for an interface that does not exist — so
 //! the two cases are reported separately, with what to do about each.
 
+use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixDatagram;
 use std::path::PathBuf;
@@ -41,6 +47,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("command {cmd:?} failed: {reason}")]
     CommandFailed { cmd: String, reason: String },
+    #[error("the control connection is not attached for events (send ATTACH first)")]
+    NotAttached,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -50,7 +58,9 @@ pub struct Supplicant {
     socket: UnixDatagram,
     /// The local address we bound, which the server replies to.
     local_path: PathBuf,
-    pending_events: Vec<String>,
+    pending_events: VecDeque<String>,
+    /// Whether `ATTACH` has been accepted on this connection.
+    attached: bool,
 }
 
 static LOCAL_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -96,8 +106,30 @@ impl Supplicant {
         Ok(Self {
             socket,
             local_path,
-            pending_events: Vec::new(),
+            pending_events: VecDeque::new(),
+            attached: false,
         })
+    }
+
+    /// Register this connection as a monitor for unsolicited events.
+    ///
+    /// `ATTACH` is what `wpa_ctrl_attach()` sends, and it is not optional:
+    /// the control interface delivers events only to attached connections.
+    /// Without it, `P2P_FIND` returns `OK` and the supplicant does find
+    /// peers, but no `P2P-DEVICE-FOUND` event ever reaches us — discovery
+    /// waits out its whole window and reports "no peers" while the peer
+    /// table behind it is populated.
+    pub fn attach(&mut self) -> Result<()> {
+        if !self.attached {
+            self.request("ATTACH")?;
+            self.attached = true;
+        }
+        Ok(())
+    }
+
+    /// Whether this connection is registered for events.
+    pub fn is_attached(&self) -> bool {
+        self.attached
     }
 
     /// Send a command and return the reply.
@@ -138,7 +170,7 @@ impl Supplicant {
             }
             if line.starts_with('<') {
                 // Unsolicited event arriving between request and reply.
-                self.pending_events.push(line);
+                self.pending_events.push_back(line);
                 continue;
             }
             return Ok(line);
@@ -149,8 +181,15 @@ impl Supplicant {
     ///
     /// Returns `Ok(None)` on timeout. Late replies to earlier commands are
     /// discarded.
+    ///
+    /// This is an error on an unattached connection rather than a silent
+    /// wait: without `ATTACH` the supplicant will never send an event, so a
+    /// silent wait is indistinguishable from a search that finds nothing.
     pub fn poll_event(&mut self, timeout: Duration) -> Result<Option<String>> {
-        if let Some(event) = self.pending_events.pop() {
+        if !self.is_attached() {
+            return Err(Error::NotAttached);
+        }
+        if let Some(event) = self.pending_events.pop_front() {
             return Ok(Some(event));
         }
         self.socket.set_read_timeout(Some(timeout))?;
@@ -415,12 +454,15 @@ mod tests {
         let fake = Fake::start();
         let mut client = fake.connect();
         let server = std::thread::spawn(move || {
+            let to = fake.receive("ATTACH");
+            fake.reply(&to, "OK\n");
             let to = fake.receive("RADIO_WORK show");
             // An unsolicited event can arrive between the request and the
             // reply; it must not be mistaken for the reply.
             fake.reply(&to, "<2>CTRL-EVENT-SCAN-STARTED\n");
             fake.reply(&to, "OK\n");
         });
+        client.attach().unwrap();
         assert_eq!(client.request("RADIO_WORK show").unwrap(), "");
         assert_eq!(
             client.poll_event(Duration::from_millis(100)).unwrap(),
@@ -433,6 +475,46 @@ mod tests {
     fn polling_for_an_event_times_out_without_one() {
         let fake = Fake::start();
         let mut client = fake.connect();
+        let server = std::thread::spawn(move || {
+            let to = fake.receive("ATTACH");
+            fake.reply(&to, "OK\n");
+        });
+        client.attach().unwrap();
         assert_eq!(client.poll_event(Duration::from_millis(50)).unwrap(), None);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn attach_registers_the_connection_for_events() {
+        let fake = Fake::start();
+        let mut client = fake.connect();
+        let server = std::thread::spawn(move || {
+            let to = fake.receive("ATTACH");
+            fake.reply(&to, "OK\n");
+            fake.reply(
+                &to,
+                "<3>P2P-DEVICE-FOUND aa:bb:cc:dd:ee:ff p2p_dev_addr=11:22:33:44:55:66\n",
+            );
+        });
+        client.attach().unwrap();
+        assert!(client.is_attached());
+        let event = client
+            .poll_event(Duration::from_secs(2))
+            .unwrap()
+            .expect("the event has to arrive");
+        assert!(event.contains("P2P-DEVICE-FOUND"), "{event}");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn polling_without_attaching_is_an_error() {
+        // Silence here is indistinguishable from "no peers", which is the
+        // exact bug this guards against.
+        let fake = Fake::start();
+        let mut client = fake.connect();
+        assert!(matches!(
+            client.poll_event(Duration::from_millis(10)),
+            Err(Error::NotAttached)
+        ));
     }
 }

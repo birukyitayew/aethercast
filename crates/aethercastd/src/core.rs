@@ -13,6 +13,7 @@ use aethercast_api::{Diagnostics, Session, StationStatus, INTERFACE, OBJECT_PATH
 pub use aethercast_api::Device;
 
 use crate::discovery::Peer;
+use crate::p2p::Event as P2pEvent;
 use crate::radio::Radio;
 use crate::wfd::{self, WfdIe};
 
@@ -101,50 +102,80 @@ impl Manager {
     ///
     /// This is what the daemon runs in the background, so that a client is
     /// told when a sink appears instead of polling for it.
-    pub fn search(&self, duration: u32) -> Vec<Device> {
-        let peers = self
-            .with_radio(|radio| {
-                // A sink that filters on the WFD element will not answer
-                // without one.
-                let ie = wfd::source_ie(crate::rtsp::DEFAULT_CONTROL_PORT, 200);
-                let _ = radio.set_wfd_ie(&ie);
-
-                let _ = radio.p2p_find(duration);
-                let deadline =
-                    std::time::Instant::now() + std::time::Duration::from_secs(duration as u64 + 5);
-                let mut peers: std::collections::BTreeMap<String, Peer> =
-                    std::collections::BTreeMap::new();
-                while std::time::Instant::now() < deadline {
-                    if let Ok(Some(line)) = radio
-                        .supplicant()
-                        .poll_event(std::time::Duration::from_millis(500))
-                    {
-                        if let Some(peer) = Peer::parse_event(&line) {
-                            peers.entry(peer.p2p_device_address.clone()).or_insert(peer);
-                        }
-                    }
-                }
-                let _ = radio.p2p_stop_find();
-
-                // Fill in the details of the peers we only saw as events.
-                if let Ok(addresses) = radio.p2p_peers() {
-                    for address in addresses {
-                        if let Ok(details) = radio.p2p_peer(&address) {
-                            if let Some(peer) = peers.get_mut(&address) {
-                                peer.merge_fields(&details);
-                            }
-                        }
-                    }
-                }
-                peers.into_values().collect::<Vec<Peer>>()
-            })
-            .unwrap_or_default();
-
+    ///
+    /// An error is reported rather than turned into an empty list: "the search
+    /// could not run" and "the search ran and found nothing" are different
+    /// answers, and the caller (and the person reading the journal) needs to
+    /// know which one it got.
+    pub fn search(&self, duration: u32) -> Result<Vec<Device>, String> {
+        let peers = self.search_peers(duration)?;
         let devices: Vec<Device> = peers.iter().map(device_from_peer).collect();
         for device in &devices {
             self.announce_device(device);
         }
-        devices
+        Ok(devices)
+    }
+
+    /// Run one search and return the peer table.
+    ///
+    /// The command line prints the peer details, which the API devices do not
+    /// carry, so the two front ends share this instead of each growing its own
+    /// copy of the search loop.
+    pub fn search_peers(&self, duration: u32) -> Result<Vec<Peer>, String> {
+        self.open_radio()?;
+        self.with_radio(|radio| {
+            // A sink that filters on the WFD element will not answer
+            // without one.
+            let ie = wfd::source_ie(crate::rtsp::DEFAULT_CONTROL_PORT, 200);
+            radio.set_wfd_ie(&ie).map_err(|e| e.to_string())?;
+
+            radio.p2p_find(duration).map_err(|e| e.to_string())?;
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_secs(duration as u64 + 5);
+            let mut peers: std::collections::BTreeMap<String, Peer> =
+                std::collections::BTreeMap::new();
+            let mut poll_error = None;
+            while std::time::Instant::now() < deadline {
+                match radio
+                    .supplicant()
+                    .poll_event(std::time::Duration::from_millis(500))
+                {
+                    Ok(Some(line)) => {
+                        if matches!(P2pEvent::parse(&line), Some(P2pEvent::FindStopped)) {
+                            break;
+                        }
+                        if let Some(peer) = Peer::parse_event(&line) {
+                            peers.entry(peer.p2p_device_address.clone()).or_insert(peer);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        poll_error = Some(format!("the control connection failed mid-search: {e}"));
+                        break;
+                    }
+                }
+            }
+            // Always stop the find, even after a failed poll: leaving it
+            // running makes the next search fail with BUSY.
+            let stopped = radio.p2p_stop_find().map_err(|e| e.to_string());
+            if let Some(error) = poll_error {
+                return Err(error);
+            }
+            stopped?;
+
+            // The event is a notification, not the peer table. A peer the
+            // supplicant knows about still has to appear even if its event
+            // was missed, so enumerate the table and fill in the details.
+            for address in radio.p2p_peers().map_err(|e| e.to_string())? {
+                let details = radio.p2p_peer(&address).unwrap_or_default();
+                let peer = peers
+                    .entry(address.clone())
+                    .or_insert_with(|| Peer::from_details(&address, ""));
+                peer.merge_fields(&details);
+            }
+            Ok(peers.into_values().collect::<Vec<Peer>>())
+        })
+        .unwrap_or_else(|| Err("the radio is not available".to_string()))
     }
 
     /// Announce a device, if it is new.

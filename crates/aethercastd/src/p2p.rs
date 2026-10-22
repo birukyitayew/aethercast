@@ -15,13 +15,18 @@
 //! | `P2P_PROV_DISC <addr> pbc` | check the peer's provisioning method |
 //! | `P2P_CONNECT <addr> pbc` | invite the peer into a group |
 //!
-//! and the events `P2P_EVENT_GROUP_STARTED`, `P2P_EVENT_PEER_CONNECTED`,
-//! `P2P_EVENT_GO_NEG_SUCCESS` and `P2P_EVENT_GROUP_FORMATION_FAILURE`.
+//! and the events `P2P-GROUP-STARTED`, `P2P-PEER-CONNECTED`,
+//! `P2P-GO-NEG-SUCCESS` and `P2P-GROUP-FORMATION-FAILURE`.
 //!
-//! `P2P_EVENT_GROUP_STARTED` is shaped like:
+//! The names are the strings `wpa_supplicant` puts on the control
+//! interface. They are **not** the C macro names from `wpa_ctrl.h`
+//! (`P2P_EVENT_GROUP_STARTED` and friends): those macros expand to these
+//! strings, and matching the macro name sees nothing at all.
+//!
+//! `P2P-GROUP-STARTED` is shaped like:
 //!
 //! ```text
-//! P2P_EVENT_GROUP_STARTED p2p-wlan0-0 GO ssid="Direct-xy" freq=2412
+//! <3>P2P-GROUP-STARTED p2p-wlan0-0 GO ssid="Direct-xy" freq=2412
 //!     psk=... go_dev_addr=aa:bb:cc:dd:ee:ff
 //! ```
 
@@ -41,9 +46,9 @@ pub struct GroupStarted {
 }
 
 impl GroupStarted {
-    /// Parse a `P2P_EVENT_GROUP_STARTED` line.
+    /// Parse a `P2P-GROUP-STARTED` line.
     pub fn parse(line: &str) -> Option<Self> {
-        let rest = line.split("P2P_EVENT_GROUP_STARTED").nth(1)?.trim();
+        let rest = line.split("P2P-GROUP-STARTED").nth(1)?.trim();
         let mut parts = rest.split_whitespace();
         let interface = parts.next()?.to_string();
         let role = parts.next().unwrap_or("");
@@ -98,28 +103,28 @@ impl Event {
             return None;
         }
         let body = text.split_once('>')?.1.trim();
-        if body.starts_with("P2P_EVENT_GROUP_STARTED") {
+        if body.starts_with("P2P-GROUP-STARTED") {
             return GroupStarted::parse(body).map(Event::GroupStarted);
         }
-        if body.starts_with("P2P_EVENT_DEVICE_FOUND") {
+        if body.starts_with("P2P-DEVICE-FOUND") {
             return Some(Event::DeviceFound(body.to_string()));
         }
-        if body.starts_with("P2P_EVENT_PEER_CONNECTED") {
+        if body.starts_with("P2P-PEER-CONNECTED") {
             return Some(Event::PeerConnected(body.to_string()));
         }
-        if body.starts_with("P2P_EVENT_GROUP_FORMATION_FAILURE") {
+        if body.starts_with("P2P-GROUP-FORMATION-FAILURE") {
             return Some(Event::GroupFormationFailure(body.to_string()));
         }
-        if body.starts_with("P2P_EVENT_GROUP_REMOVED") {
+        if body.starts_with("P2P-GROUP-REMOVED") {
             return Some(Event::GroupRemoved(body.to_string()));
         }
-        if body.starts_with("P2P_EVENT_GO_NEG_SUCCESS") {
+        if body.starts_with("P2P-GO-NEG-SUCCESS") {
             return Some(Event::GoNegotiationSuccess(body.to_string()));
         }
-        if body.starts_with("P2P_EVENT_GO_NEG_FAILURE") {
+        if body.starts_with("P2P-GO-NEG-FAILURE") {
             return Some(Event::GoNegotiationFailure(body.to_string()));
         }
-        if body.starts_with("P2P_EVENT_FIND_STOPPED") {
+        if body.starts_with("P2P-FIND-STOPPED") {
             return Some(Event::FindStopped);
         }
         Some(Event::Other(body.to_string()))
@@ -132,7 +137,8 @@ mod tests {
 
     #[test]
     fn parses_a_group_started_event() {
-        let line = "<3>P2P_EVENT_GROUP_STARTED p2p-wlan0-0 GO ssid=\"Direct-xy\" freq=2412 psk=abc go_dev_addr=aa:bb:cc:dd:ee:ff";
+        // The real line `wpa_supplicant` sends, captured from its journal.
+        let line = "<3>P2P-GROUP-STARTED p2p-wlan0-0 GO ssid=\"Direct-xy\" freq=2412 psk=abc go_dev_addr=aa:bb:cc:dd:ee:ff";
         let event = Event::parse(line).unwrap();
         let group = match event {
             Event::GroupStarted(group) => group,
@@ -147,23 +153,33 @@ mod tests {
 
     #[test]
     fn parses_a_client_group_started_event() {
-        let line = "<3>P2P_EVENT_GROUP_STARTED p2p-wlan0-0 client ssid=\"Direct-xy\" freq=2412 go_dev_addr=aa:bb:cc:dd:ee:ff";
+        let line = "<3>P2P-GROUP-STARTED p2p-wlan0-0 client ssid=\"Direct-xy\" freq=2412 go_dev_addr=aa:bb:cc:dd:ee:ff";
         let group = GroupStarted::parse(line.split_once('>').unwrap().1).unwrap();
         assert!(!group.go);
     }
 
     #[test]
+    fn the_c_macro_names_are_not_wire_events() {
+        // `wpa_ctrl.h` defines these macros, but the strings on the socket
+        // use dashes. Matching the macro name is a silent no-op.
+        assert!(matches!(
+            Event::parse("<1>P2P_EVENT_DEVICE_FOUND aa:bb:cc:dd:ee:ff"),
+            Some(Event::Other(_))
+        ));
+    }
+
+    #[test]
     fn classifies_the_events_the_daemon_cares_about() {
         assert!(matches!(
-            Event::parse("<1>P2P_EVENT_FIND_STOPPED"),
+            Event::parse("<1>P2P-FIND-STOPPED"),
             Some(Event::FindStopped)
         ));
         assert!(matches!(
-            Event::parse("<1>P2P_EVENT_PEER_CONNECTED aa:bb:cc:dd:ee:ff"),
+            Event::parse("<1>P2P-PEER-CONNECTED aa:bb:cc:dd:ee:ff"),
             Some(Event::PeerConnected(_))
         ));
         assert!(matches!(
-            Event::parse("<1>P2P_EVENT_GROUP_FORMATION_FAILURE reason=1"),
+            Event::parse("<1>P2P-GROUP-FORMATION-FAILURE reason=1"),
             Some(Event::GroupFormationFailure(_))
         ));
         assert!(Event::parse("not an event").is_none());

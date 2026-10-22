@@ -74,6 +74,12 @@ Expected when the sink advertises: `N peer(s) found`, and for the sink
 `wfd role : primary sink`, `control port: 7236`, a session state, and a
 maximum rate.
 
+The search is event-driven: a 10-second search returns in about 10 seconds,
+not 15. If it takes the full duration plus five seconds, the control
+connection is not receiving `P2P-FIND-STOPPED`/`P2P-DEVICE-FOUND` events; the
+daemon now reports `the control connection is not attached for events`
+instead of an empty list.
+
 Expected when it does not: the command says whether the radio is wedged,
 whether the adapter is band-limited, and that the sink must be in Miracast
 mode. Pass for this step means **the output explains the result**; record
