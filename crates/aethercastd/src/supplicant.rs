@@ -13,7 +13,10 @@
 //! needed: one `recv` is one message.
 //!
 //! The socket lives at `/run/wpa_supplicant/<iface>` and is group-writable for
-//! members of `netdev`, so the whole daemon can run unprivileged.
+//! members of `netdev`, so the whole daemon can run unprivileged. On a
+//! hardened system the directory is `0750 root:netdev`, and a user who is not
+//! in that group gets `EACCES` even for an interface that does not exist — so
+//! the two cases are reported separately, with what to do about each.
 
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixDatagram;
@@ -25,6 +28,15 @@ use std::time::Duration;
 pub enum Error {
     #[error("wpa_supplicant control socket not found at {0} — is the interface managed by NetworkManager?")]
     SocketMissing(PathBuf),
+    #[error(
+        "not allowed to open the wpa_supplicant control socket at {0} — your user is not in the group that owns it (normally `netdev`). Add it with `sudo usermod -aG netdev $USER`, then log out and back in"
+    )]
+    SocketDenied(PathBuf),
+    #[error("creating the local control socket at {path} failed: {source}")]
+    LocalSocket {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("i/o error talking to wpa_supplicant: {0}")]
     Io(#[from] std::io::Error),
     #[error("command {cmd:?} failed: {reason}")]
@@ -62,23 +74,16 @@ impl Supplicant {
         // `wpa_ctrl_open()` does in `src/ctrl_iface_unix.c`. Without it the
         // request is delivered but the reply is lost and the caller blocks
         // forever.
-        let socket = UnixDatagram::bind(&local_path).map_err(|e| {
-            if e.kind() == ErrorKind::NotFound {
-                Error::SocketMissing(local_path.clone())
-            } else {
-                Error::Io(e)
-            }
+        let socket = UnixDatagram::bind(&local_path).map_err(|source| Error::LocalSocket {
+            path: local_path.clone(),
+            source,
         })?;
 
         // `UnixDatagram::connect` binds the peer and returns `()`, unlike
         // `UnixStream::connect` which hands the socket back.
-        socket.connect(&server).map_err(|e| {
-            if e.kind() == ErrorKind::NotFound {
-                Error::SocketMissing(server.clone())
-            } else {
-                Error::Io(e)
-            }
-        })?;
+        socket
+            .connect(&server)
+            .map_err(|e| connect_error(server.clone(), e))?;
 
         Ok(Self {
             socket,
@@ -164,6 +169,20 @@ fn _assert_read_in_scope<T: Read>() {}
 #[allow(dead_code)]
 fn _assert_write_in_scope<T: Write>() {}
 
+/// Classify a failed connection to the control socket.
+///
+/// `EACCES` is not a missing socket: on Debian and Ubuntu
+/// `/run/wpa_supplicant` is `0750 root:netdev`, so a user outside `netdev`
+/// is refused before the per-interface socket is even looked at. Reporting
+/// that as a generic I/O error sends people looking for the wrong problem.
+fn connect_error(path: PathBuf, source: std::io::Error) -> Error {
+    match source.kind() {
+        ErrorKind::NotFound => Error::SocketMissing(path),
+        ErrorKind::PermissionDenied => Error::SocketDenied(path),
+        _ => Error::Io(source),
+    }
+}
+
 /// A unique local address for the control socket.
 ///
 /// `wpa_supplicant` sends its replies to the path the request came from, so
@@ -183,8 +202,11 @@ mod tests {
 
     #[test]
     fn reports_a_missing_socket() {
+        // On a host where `/run/wpa_supplicant` is `0750 root:netdev` and the
+        // test user is not in `netdev`, the kernel answers `EACCES` instead
+        // of `ENOENT`. Both name the interface, and both are honest.
         match Supplicant::connect("definitely-not-an-interface") {
-            Err(Error::SocketMissing(path)) => {
+            Err(Error::SocketMissing(path)) | Err(Error::SocketDenied(path)) => {
                 assert!(path
                     .to_string_lossy()
                     .contains("definitely-not-an-interface"));
@@ -192,5 +214,36 @@ mod tests {
             Err(other) => panic!("unexpected error: {other}"),
             Ok(_) => panic!("connecting to a missing interface should fail"),
         }
+    }
+
+    #[test]
+    fn a_permission_error_says_what_to_do() {
+        let error = connect_error(
+            PathBuf::from("/run/wpa_supplicant/wlan0"),
+            std::io::Error::from(ErrorKind::PermissionDenied),
+        );
+        assert!(matches!(error, Error::SocketDenied(_)));
+        let message = error.to_string();
+        assert!(message.contains("netdev"), "{message}");
+        assert!(message.contains("usermod"), "{message}");
+        assert!(!message.contains("os error 13"), "{message}");
+    }
+
+    #[test]
+    fn a_missing_socket_stays_a_missing_socket() {
+        let error = connect_error(
+            PathBuf::from("/run/wpa_supplicant/wlan0"),
+            std::io::Error::from(ErrorKind::NotFound),
+        );
+        assert!(matches!(error, Error::SocketMissing(_)));
+    }
+
+    #[test]
+    fn other_io_errors_are_not_misreported() {
+        let error = connect_error(
+            PathBuf::from("/run/wpa_supplicant/wlan0"),
+            std::io::Error::from(ErrorKind::ConnectionRefused),
+        );
+        assert!(matches!(error, Error::Io(_)));
     }
 }
