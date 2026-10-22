@@ -246,6 +246,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_client_is_told_when_a_session_changes() {
+        let Ok(connection) = zbus::Connection::session().await else {
+            eprintln!("no session bus: skipping");
+            return;
+        };
+        let manager = std::sync::Arc::new(crate::core::Manager::new("wlan0"));
+        manager.set_bus(connection.clone());
+        connection
+            .object_server()
+            .at(OBJECT_PATH, ManagerInterface(manager.clone()))
+            .await
+            .unwrap();
+        let name = unique_name("sessions");
+        connection.request_name(name.as_str()).await.unwrap();
+
+        let proxy = ManagerApiProxy::builder(&connection)
+            .destination(name.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let mut signals = proxy.receive_session_state_changed().await.unwrap();
+
+        let session = manager.new_session("aa:bb:cc:dd:ee:ff");
+        manager.update_session(&session.id, "playing", None);
+
+        let received = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            use futures_util::StreamExt;
+            signals.next().await
+        })
+        .await
+        .expect("the signal did not arrive")
+        .expect("the signal stream ended");
+        let args = received.args().unwrap();
+        assert_eq!(args.session, session.id);
+        assert_eq!(args.state, "playing");
+    }
+
+    #[tokio::test]
     async fn the_api_answers_on_the_session_bus() {
         // The test needs a session bus; `dbus-run-session` provides one.
         let Ok(connection) = zbus::Connection::session().await else {
