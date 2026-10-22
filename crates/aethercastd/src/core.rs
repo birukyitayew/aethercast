@@ -70,15 +70,19 @@ impl Manager {
 
     /// Emit a signal on the bus.
     ///
-    /// The body is a single string, which is how the rest of the API
-    /// carries structured data.
-    pub fn emit_signal(&self, member: &str, body: &str) -> bool {
+    /// The body is serialised from whatever the contract says the signal
+    /// carries: a single JSON string for `DeviceFound`, a session id and a
+    /// state for `SessionStateChanged`.
+    pub fn emit_signal<T>(&self, member: &str, body: &T) -> bool
+    where
+        T: serde::Serialize + zbus::zvariant::Type,
+    {
         let guard = self.bus.lock().unwrap();
         let Some(connection) = guard.as_ref() else {
             return false;
         };
         let message = zbus::Message::signal(OBJECT_PATH, INTERFACE, member)
-            .and_then(|builder| builder.build(&body.to_string()));
+            .and_then(|builder| builder.build(body));
         match message {
             Ok(message) => {
                 let connection = connection.clone();
@@ -220,11 +224,24 @@ impl Manager {
     }
 
     /// Update a session's state.
+    ///
+    /// A change is announced on the bus, because the contract publishes
+    /// `SessionStateChanged` and a client that has to poll to notice would
+    /// be a client the API lied to.
     pub fn update_session(&self, id: &str, state: &str, detail: Option<String>) {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(session) = sessions.iter_mut().find(|s| s.id == id) {
-            session.state = state.to_string();
-            session.detail = detail;
+        let changed = {
+            let mut sessions = self.sessions.lock().unwrap();
+            match sessions.iter_mut().find(|s| s.id == id) {
+                Some(session) => {
+                    session.state = state.to_string();
+                    session.detail = detail;
+                    true
+                }
+                None => false,
+            }
+        };
+        if changed {
+            self.emit_signal("SessionStateChanged", &(id.to_string(), state.to_string()));
         }
     }
 
