@@ -1,7 +1,10 @@
 # Architecture
 
-**Status:** the first two milestones are built and tested. This document
-describes what exists, what is proven, and what is not.
+**Status:** the daemon, the published API, and the GTK4 client are built and
+tested. A cast is proven end to end against a reference sink. What is missing
+is a cast to a physical sink, which needs hardware this repository's
+development machine does not have — see
+[`pc-test-checklist.md`](pc-test-checklist.md).
 
 ## The shape of the problem
 
@@ -115,9 +118,11 @@ The command line and the bus sit on the same `core::Manager`, so they
 can never disagree about what the daemon is doing, and neither of them
 owns state that the other one also owns.
 
-Signals are the next part of the API: a client has to be told when a
-device appears and when a session changes state rather than polling for
-it, and the client is what needs them.
+Signals complete the API. `DeviceFound` carries a device as JSON when the
+background search sees one for the first time, and `SessionStateChanged`
+carries the session id and its new state whenever a session changes. Both are
+implemented in the daemon, published in the contract, and consumed by the
+client — the client polls as a safety net, not because it has to.
 
 ### The three crates
 
@@ -194,6 +199,8 @@ Because it is ours, it gives us three things a borrowed device cannot:
 | A full cast works | `spike/19-end-to-end.sh`: capture → encode → mux → RTP → a sink that ffprobe accepts |
 | The radio is healthy and recoverable | `doctor`, `recover`, and the wedge report |
 | The adapter's limits are visible | `doctor` names the band limitation |
+| The supplicant control protocol is correct | `supplicant` tests against a fake datagram socket: framing, documents, `FAIL`, empty replies, interleaved events, timeouts |
+| The API tells clients about changes | tests on a real session bus for `DeviceFound` and `SessionStateChanged` |
 
 ## What is not proven
 
@@ -202,7 +209,13 @@ Because it is ours, it gives us three things a borrowed device cannot:
   connects to the group's address. The group forms — `p2p group` creates
   the interface — but the group interface has no address until a peer
   joins, so the last mile cannot be exercised without a second Wi-Fi
-  Direct device.
+  Direct device. The exact checks are in
+  [`pc-test-checklist.md`](pc-test-checklist.md).
+- **Casting to the device the user chose.** `StartCast` takes a device id,
+  but the session waits for whichever sink connects first; the source does
+  not yet connect to the sink's control port itself. The client's Cast
+  button therefore starts a session rather than targeting that sink. Filed
+  as an issue; finishing it needs a real sink.
 - **720p30.** Measured at 0.32–0.81× realtime with OpenH264 on this
   CPU, so 720p needs hardware encoding. 640×480p30 is the default and is
   the format the specification mandates.
@@ -222,12 +235,14 @@ See the ADRs:
 
 ## Where the next milestones go
 
-1. **Physical sink.** P2P group formation with a peer, the RTSP server
+1. **A physical sink.** P2P group formation with a peer, the RTSP server
    bound to the group's address, and a real TV or phone on the other
-   end.
-2. **The client.** A GTK4 application over the D-Bus API, with the
-   device list, the quality presets, and the diagnostics the CLI
-   already prints.
-3. **More protocols.** The provider interface is designed for it: Google
+   end. [`pc-test-checklist.md`](pc-test-checklist.md) is the run book.
+2. **Targeted casting.** `StartCast(device)` must connect to that device's
+   control port instead of waiting for any sink, and `StopCast` must stop
+   the pipeline rather than only forgetting its record.
+3. **720p.** It needs hardware encoding; software encoding is measured
+   below realtime at 720p30 on the reference CPU.
+4. **More protocols.** The provider interface is designed for it: Google
    Cast as a control-plane provider, DLNA, and AirPlay with the FairPlay
    line written into the contributor guidance before any of it starts.
