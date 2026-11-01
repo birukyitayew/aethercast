@@ -718,33 +718,27 @@ fn media_test(cli: &Cli, args: &MediaTestArgs) -> Result<()> {
     if cli.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "file": args.out,
-                "bytes": size,
-                "encoder": format!("{:?}", built.encoder),
-                "encoder_element": built.encoder_element,
-                "profile": {
-                    "width": profile.width,
-                    "height": profile.height,
-                    "framerate": profile.framerate,
-                    "bitrate_bps": profile.bitrate_bps,
-                },
-            }))?
+            serde_json::to_string_pretty(&media_test_json_report(
+                args.udp.as_deref(),
+                args.out.as_str(),
+                size,
+                &format!("{:?}", built.encoder),
+                &built.encoder_element,
+                &profile,
+            ))?
+        );
+    } else if streaming {
+        println!(
+            "streamed to {} (encoder: {} / {:?})",
+            args.udp.as_deref().unwrap_or("-"),
+            built.encoder_element,
+            built.encoder
         );
     } else {
-        if streaming {
-            println!(
-                "streamed to {} (encoder: {} / {:?})",
-                args.udp.as_deref().unwrap_or("-"),
-                built.encoder_element,
-                built.encoder
-            );
-        } else {
-            println!(
-                "wrote {} bytes to {} (encoder: {} / {:?})",
-                size, args.out, built.encoder_element, built.encoder
-            );
-        }
+        println!(
+            "wrote {} bytes to {} (encoder: {} / {:?})",
+            size, args.out, built.encoder_element, built.encoder
+        );
     }
     if !streaming && size == 0 {
         anyhow::bail!("the pipeline produced no data");
@@ -892,6 +886,15 @@ fn arm(cli: &Cli, mut radio: Radio, args: &ArmArgs) -> Result<()> {
 fn recover(cli: &Cli, mut radio: Radio) -> Result<()> {
     let recovery = radio.recover()?;
     let stale = radio.remove_stale_group_interfaces()?;
+    if cli.json {
+        // Machine-readable output must be a single JSON document — no
+        // human preamble (see #20).
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&recover_json_report(&recovery, &stale))?
+        );
+        return Ok(());
+    }
     if !stale.is_empty() {
         println!("removed stale group interface(s): {}", stale.join(", "));
     } else {
@@ -903,24 +906,64 @@ fn recover(cli: &Cli, mut radio: Radio) -> Result<()> {
             );
         }
     }
-    if cli.json {
-        println!("{}", serde_json::to_string_pretty(&recovery)?);
-    } else {
-        println!(
-            "radio-work items : {} -> {}",
-            recovery.work_items_before, recovery.work_items_after
-        );
-        println!(
-            "station          : {} (after {} ms)",
-            if recovery.station_connected {
-                "reconnected"
-            } else {
-                "NOT reconnected"
-            },
-            recovery.reconnected_after_ms
-        );
-    }
+    println!(
+        "radio-work items : {} -> {}",
+        recovery.work_items_before, recovery.work_items_after
+    );
+    println!(
+        "station          : {} (after {} ms)",
+        if recovery.station_connected {
+            "reconnected"
+        } else {
+            "NOT reconnected"
+        },
+        recovery.reconnected_after_ms
+    );
     Ok(())
+}
+
+/// JSON document for `recover --json` (honest about stale interfaces too).
+fn recover_json_report(recovery: &radio::Recovery, stale: &[String]) -> serde_json::Value {
+    serde_json::json!({
+        "work_items_before": recovery.work_items_before,
+        "work_items_after": recovery.work_items_after,
+        "station_connected": recovery.station_connected,
+        "reconnected_after_ms": recovery.reconnected_after_ms,
+        "stale_group_interfaces": stale,
+    })
+}
+
+/// JSON document for `media test --json`.
+///
+/// UDP mode must not invent a `file` / `bytes` pair for a path that was never
+/// written (#20); it reports the transport and destination instead.
+fn media_test_json_report(
+    udp: Option<&str>,
+    out: &str,
+    size: u64,
+    encoder: &str,
+    encoder_element: &str,
+    profile: &media::Profile,
+) -> serde_json::Value {
+    let mut report = serde_json::json!({
+        "encoder": encoder,
+        "encoder_element": encoder_element,
+        "profile": {
+            "width": profile.width,
+            "height": profile.height,
+            "framerate": profile.framerate,
+            "bitrate_bps": profile.bitrate_bps,
+        },
+    });
+    let obj = report.as_object_mut().expect("json object");
+    if let Some(destination) = udp {
+        obj.insert("transport".into(), serde_json::json!("udp"));
+        obj.insert("destination".into(), serde_json::json!(destination));
+    } else {
+        obj.insert("file".into(), serde_json::json!(out));
+        obj.insert("bytes".into(), serde_json::json!(size));
+    }
+    report
 }
 
 fn discover(cli: &Cli, manager: &core::Manager, args: &DiscoverArgs) -> Result<()> {
@@ -1016,4 +1059,69 @@ fn discover(cli: &Cli, manager: &core::Manager, args: &DiscoverArgs) -> Result<(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod json_honesty_tests {
+    use super::*;
+
+    #[test]
+    fn recover_json_is_a_single_document_with_stale_list() {
+        let recovery = radio::Recovery {
+            work_items_before: 3,
+            work_items_after: 0,
+            station_connected: true,
+            reconnected_after_ms: 40,
+        };
+        let report = recover_json_report(&recovery, &["p2p-wlan0-0".into()]);
+        assert_eq!(report["work_items_before"], 3);
+        assert_eq!(report["stale_group_interfaces"][0], "p2p-wlan0-0");
+        // Must parse as one JSON object (no human preamble possible here).
+        let text = serde_json::to_string(&report).unwrap();
+        assert!(serde_json::from_str::<serde_json::Value>(&text).is_ok());
+    }
+
+    fn sample_profile() -> media::Profile {
+        media::Profile {
+            width: 1280,
+            height: 720,
+            framerate: 30,
+            bitrate_bps: 4_000_000,
+            encoder: media::Encoder::X264,
+            audio: false,
+            audio_device: String::new(),
+            test_pattern: true,
+        }
+    }
+
+    #[test]
+    fn media_test_json_udp_reports_transport_not_a_file() {
+        let report = media_test_json_report(
+            Some("127.0.0.1:50000"),
+            "/tmp/would-not-exist.ts",
+            0,
+            "X264",
+            "x264enc",
+            &sample_profile(),
+        );
+        assert_eq!(report["transport"], "udp");
+        assert_eq!(report["destination"], "127.0.0.1:50000");
+        assert!(report.get("file").is_none());
+        assert!(report.get("bytes").is_none());
+    }
+
+    #[test]
+    fn media_test_json_file_mode_keeps_file_and_bytes() {
+        let report = media_test_json_report(
+            None,
+            "/tmp/out.ts",
+            42,
+            "X264",
+            "x264enc",
+            &sample_profile(),
+        );
+        assert_eq!(report["file"], "/tmp/out.ts");
+        assert_eq!(report["bytes"], 42);
+        assert!(report.get("transport").is_none());
+    }
 }
